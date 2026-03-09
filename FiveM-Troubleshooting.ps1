@@ -114,18 +114,6 @@ function Pause-Console {
     Read-Host "Press Enter to continue"
 }
 
-function Show-ProgressStep {
-    param(
-        [int]$Current,
-        [int]$Total,
-        [string]$Activity,
-        [string]$Status
-    )
-
-    $percent = [math]::Round(($Current / $Total) * 100, 0)
-    Write-Progress -Activity $Activity -Status $Status -PercentComplete $percent
-}
-
 function Read-YesNo {
     param(
         [string]$Prompt = "Continue? (Y/N)",
@@ -460,6 +448,34 @@ function Get-SystemDiagnostics {
     return $diag
 }
 
+function Invoke-DiagnosticsOnly {
+    Show-Banner
+    Write-Host "Diagnostics Only..." -ForegroundColor Green
+    Write-Host
+
+    Invoke-Safely -ActionName "Collect System Diagnostics" -ScriptBlock { Get-SystemDiagnostics | Out-Null } | Out-Null
+    Invoke-Safely -ActionName "Check Storage Health" -ScriptBlock { Test-StorageHealth } | Out-Null
+    Invoke-Safely -ActionName "Test Connectivity" -ScriptBlock { Test-InternetConnectivity | Out-Null } | Out-Null
+    Invoke-Safely -ActionName "Check Crash Folder" -ScriptBlock { Test-FiveMCrashPresence | Out-Null } | Out-Null
+
+    Show-ResultsTable
+    Pause-Console
+}
+
+function Invoke-SafeModeScan {
+    Show-Banner
+    Write-Host "Safe Mode / Read-Only Scan..." -ForegroundColor Green
+    Write-Host
+
+    Write-Log "Running read-only checks. No changes will be made." "INFO"
+    Get-SystemDiagnostics | Out-Null
+    Test-StorageHealth
+    Test-InternetConnectivity | Out-Null
+    Test-FiveMCrashPresence | Out-Null
+
+    Pause-Console
+}
+
 function Show-ActionHistory {
     Write-Host
     Write-Host "==================== Action History ====================" -ForegroundColor Cyan
@@ -523,21 +539,47 @@ function Stop-GameProcesses {
 #region Repair Actions
 function Clear-FiveMCache {
     Write-Log "Clearing FiveM cache folders..." "ACTION"
-    Remove-ChildItemsSafely -Path $Script:Paths.ServerCachePriv
-    Remove-ChildItemsSafely -Path $Script:Paths.ServerCache
+
+    $cacheTargets = @(
+        $Script:Paths.ServerCachePriv,
+        $Script:Paths.ServerCache
+    )
+
+    foreach ($target in $cacheTargets) {
+        if (Test-Path $target) {
+            Remove-ChildItemsSafely -Path $target
+            Write-Log "Cleared cache folder: $target" "SUCCESS"
+        }
+        else {
+            Write-Log "Cache folder not found: $target" "WARN"
+        }
+    }
+
     Write-Log "FiveM cache cleanup complete." "SUCCESS"
 }
 
 function Clear-FiveMCrashLogs {
     Write-Log "Clearing FiveM crash logs..." "ACTION"
-    Remove-ChildItemsSafely -Path $Script:Paths.FiveMCrashes
-    Write-Log "Crash log cleanup complete." "SUCCESS"
+
+    if (Test-Path $Script:Paths.FiveMCrashes) {
+        Remove-ChildItemsSafely -Path $Script:Paths.FiveMCrashes
+        Write-Log "Crash log cleanup complete." "SUCCESS"
+    }
+    else {
+        Write-Log "Crash folder not found: $($Script:Paths.FiveMCrashes)" "WARN"
+    }
 }
 
 function Clear-TempFiles {
     Write-Log "Clearing temp files..." "ACTION"
-    Remove-ChildItemsSafely -Path $Script:Paths.Temp
-    Write-Log "Temp cleanup complete." "SUCCESS"
+
+    if (Test-Path $Script:Paths.Temp) {
+        Remove-ChildItemsSafely -Path $Script:Paths.Temp
+        Write-Log "Temp cleanup complete." "SUCCESS"
+    }
+    else {
+        Write-Log "Temp folder not found: $($Script:Paths.Temp)" "WARN"
+    }
 }
 
 function Reset-NetworkStack {
@@ -571,24 +613,7 @@ function Set-CloudflareDNS {
     }
 }
 
-function Set-GoogleDNS {
-    $adapters = Get-ActiveAdapters
-    if (-not $adapters -or $adapters.Count -eq 0) {
-        throw "No active network adapters found."
-    }
-
-    foreach ($adapter in $adapters) {
-        try {
-            Set-DnsClientServerAddress -InterfaceIndex $adapter.IfIndex -ServerAddresses @("8.8.8.8","8.8.4.4") -ErrorAction Stop
-            Write-Log "Google DNS applied to adapter: $($adapter.Name)" "SUCCESS"
-        }
-        catch {
-            Write-Log "Failed to set Google DNS on $($adapter.Name): $($_.Exception.Message)" "ERROR"
-        }
-    }
-}
-
-function Open-FiveMFolders {
+function Open-FiveMFiles {
     $folders = @(
         $Script:Paths.FiveMApplicationData,
         $Script:Paths.FiveMCrashes,
@@ -754,136 +779,52 @@ function Export-DiagnosticsBundle {
 }
 #endregion Export
 
-#region Workflows
-function Invoke-QuickFix {
-    Show-Banner
-    Write-Host "Quick Fix in progress..." -ForegroundColor Green
-    Write-Host
-
-    $steps = @(
-        @{ Name = "Check Disk Space";        Action = { Test-StorageHealth } },
-        @{ Name = "Check FiveM Presence";    Action = { Test-FiveMInstalled | Out-Null } },
-        @{ Name = "Stop FiveM/GTA Processes";Action = { Stop-GameProcesses } },
-        @{ Name = "Clear FiveM Cache";       Action = { Clear-FiveMCache } },
-        @{ Name = "Clear Crash Logs";        Action = { Clear-FiveMCrashLogs } },
-        @{ Name = "Reset Network";           Action = { Reset-NetworkStack } },
-        @{ Name = "Set Cloudflare DNS";      Action = { Set-CloudflareDNS } },
-        @{ Name = "Test Connectivity";       Action = { Test-InternetConnectivity | Out-Null } },
-        @{ Name = "Create Support Package";  Action = { Export-DiagnosticsBundle } }
-    )
-
-    $total = $steps.Count
-    $current = 0
-
-    foreach ($step in $steps) {
-        $current++
-        Show-ProgressStep -Current $current -Total $total -Activity "FiveM Quick Fix" -Status $step.Name
-        Invoke-Safely -ActionName $step.Name -ScriptBlock $step.Action | Out-Null
-    }
-
-    Write-Progress -Activity "FiveM Quick Fix" -Completed
-    Write-Host
-    Write-Host "Quick Fix completed." -ForegroundColor Green
-    Show-ResultsTable
-    Invoke-RestartPrompt
-    Pause-Console
-}
-
-function Invoke-DiagnosticsOnly {
-    Show-Banner
-    Write-Host "Diagnostics Only..." -ForegroundColor Green
-    Write-Host
-
-    Invoke-Safely -ActionName "Collect System Diagnostics" -ScriptBlock { Get-SystemDiagnostics | Out-Null } | Out-Null
-    Invoke-Safely -ActionName "Check Storage Health" -ScriptBlock { Test-StorageHealth } | Out-Null
-    Invoke-Safely -ActionName "Test Connectivity" -ScriptBlock { Test-InternetConnectivity | Out-Null } | Out-Null
-    Invoke-Safely -ActionName "Check Crash Folder" -ScriptBlock { Test-FiveMCrashPresence | Out-Null } | Out-Null
-
-    Show-ResultsTable
-    Pause-Console
-}
-
-function Invoke-SafeModeScan {
-    Show-Banner
-    Write-Host "Safe Mode / Read-Only Scan..." -ForegroundColor Green
-    Write-Host
-
-    Write-Log "Running read-only checks. No changes will be made." "INFO"
-    Get-SystemDiagnostics | Out-Null
-    Test-StorageHealth
-    Test-InternetConnectivity | Out-Null
-    Test-FiveMCrashPresence | Out-Null
-
-    Pause-Console
-}
-#endregion Workflows
-
-#region Menus
-function Show-AdvancedMenu {
-    do {
-        Show-Banner
-        Write-Host "Advanced Tools" -ForegroundColor Cyan
-        Write-Host "1. Stop FiveM / GTA Processes"
-        Write-Host "2. Reset Network Stack"
-        Write-Host "3. Set DNS to Cloudflare"
-        Write-Host "4. Set DNS to Google"
-        Write-Host "5. Clear Temp Files"
-        Write-Host "6. Open FiveM Folders"
-        Write-Host "7. Show Action History"
-        Write-Host "8. Show Results Summary"
-        Write-Host "9. Check for Script Updates"
-        Write-Host "10. Download Latest Script"
-        Write-Host "0. Back"
-        Write-Host
-
-        $choice = Read-Host "Select an option"
-
-        switch ($choice) {
-            "1"  { Invoke-Safely -ActionName "Stop FiveM / GTA Processes" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
-            "2"  { Invoke-Safely -ActionName "Reset Network Stack" -ScriptBlock { Reset-NetworkStack } | Out-Null; Invoke-RestartPrompt; Pause-Console }
-            "3"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Pause-Console }
-            "4"  { Invoke-Safely -ActionName "Set DNS to Google" -ScriptBlock { Set-GoogleDNS } | Out-Null; Pause-Console }
-            "5"  { Invoke-Safely -ActionName "Clear Temp Files" -ScriptBlock { Clear-TempFiles } | Out-Null; Pause-Console }
-            "6"  { Invoke-Safely -ActionName "Open FiveM Folders" -ScriptBlock { Open-FiveMFolders } | Out-Null; Pause-Console }
-            "7"  { Show-ActionHistory; Pause-Console }
-            "8"  { Show-ResultsTable; Pause-Console }
-            "9"  { Test-ForUpdates | Out-Null; Pause-Console }
-            "10" { Update-ScriptFromGitHub; Pause-Console }
-            "0"  { return }
-            default { Write-Log "Invalid selection." "WARN"; Start-Sleep -Seconds 1 }
-        }
-    } while ($true)
-}
-
+#region Menu
 function Show-MainMenu {
     do {
         Show-Banner
-        Write-Host "1. Quick Fix"
-        Write-Host "2. Stop FiveM / GTA Processes"
-        Write-Host "3. Clear FiveM Cache"
-        Write-Host "4. Clear Crash Logs"
-        Write-Host "5. Reset Network"
-        Write-Host "6. Set DNS to Cloudflare"
-        Write-Host "7. Run Diagnostics"
-        Write-Host "8. Export Support Package"
-        Write-Host "9. Safe Mode / Read-Only Scan"
-        Write-Host "10. Advanced Tools"
+
+        Write-Host "--- Fixes ---" -ForegroundColor Cyan
+        Write-Host "1. Close FiveM / GTA"
+        Write-Host "2. Clear FiveM Cache"
+        Write-Host "3. Clear Crash Logs"
+        Write-Host "4. Reset Internet Settings"
+        Write-Host "5. Set DNS to Cloudflare"
+        Write-Host "6. Clear Temp Files"
+        Write-Host "7. Open FiveM Files"
+        Write-Host
+
+        Write-Host "--- Information / Support ---" -ForegroundColor Cyan
+        Write-Host "8. Run Diagnostics"
+        Write-Host "9. Export Support Package"
+        Write-Host "10. View Results Summary"
+        Write-Host "11. View Action History"
+        Write-Host
+
+        Write-Host "--- Updates ---" -ForegroundColor Cyan
+        Write-Host "12. Check for Updates"
+        Write-Host "13. Download Latest Version"
+        Write-Host
+
         Write-Host "0. Exit"
         Write-Host
 
         $choice = Read-Host "Select an option"
 
         switch ($choice) {
-            "1"  { Invoke-QuickFix }
-            "2"  { Invoke-Safely -ActionName "Stop FiveM / GTA Processes" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
-            "3"  { Invoke-Safely -ActionName "Clear FiveM Cache" -ScriptBlock { Clear-FiveMCache } | Out-Null; Pause-Console }
-            "4"  { Invoke-Safely -ActionName "Clear Crash Logs" -ScriptBlock { Clear-FiveMCrashLogs } | Out-Null; Pause-Console }
-            "5"  { Invoke-Safely -ActionName "Reset Network" -ScriptBlock { Reset-NetworkStack } | Out-Null; Invoke-RestartPrompt; Pause-Console }
-            "6"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Pause-Console }
-            "7"  { Invoke-DiagnosticsOnly }
-            "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
-            "9"  { Invoke-SafeModeScan }
-            "10" { Show-AdvancedMenu }
+            "1"  { Invoke-Safely -ActionName "Close FiveM / GTA" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
+            "2"  { Invoke-Safely -ActionName "Clear FiveM Cache" -ScriptBlock { Clear-FiveMCache } | Out-Null; Pause-Console }
+            "3"  { Invoke-Safely -ActionName "Clear Crash Logs" -ScriptBlock { Clear-FiveMCrashLogs } | Out-Null; Pause-Console }
+            "4"  { Invoke-Safely -ActionName "Reset Internet Settings" -ScriptBlock { Reset-NetworkStack } | Out-Null; Invoke-RestartPrompt; Pause-Console }
+            "5"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Pause-Console }
+            "6"  { Invoke-Safely -ActionName "Clear Temp Files" -ScriptBlock { Clear-TempFiles } | Out-Null; Pause-Console }
+            "7"  { Invoke-Safely -ActionName "Open FiveM Files" -ScriptBlock { Open-FiveMFiles } | Out-Null; Pause-Console }
+            "8"  { Invoke-DiagnosticsOnly }
+            "9"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
+            "10" { Show-ResultsTable; Pause-Console }
+            "11" { Show-ActionHistory; Pause-Console }
+            "12" { Test-ForUpdates | Out-Null; Pause-Console }
+            "13" { Update-ScriptFromGitHub; Pause-Console }
             "0"  {
                 Write-Log "Exiting tool." "INFO"
                 break
@@ -895,7 +836,7 @@ function Show-MainMenu {
         }
     } while ($true)
 }
-#endregion Menus
+#endregion Menu
 
 #region Main
 try {
