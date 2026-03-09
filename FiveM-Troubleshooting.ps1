@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.4
+    FiveM Troubleshooter v2.5
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.4.0"
+$Script:Version        = "2.5.0"
 $Script:CompanyName    = "Insomnia Studios"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -233,20 +233,185 @@ function Remove-ChildItemsSafely {
 function Get-CommonGTAPaths {
     @(
         "C:\Program Files\Rockstar Games\Grand Theft Auto V\GTA5.exe",
+        "C:\Program Files (x86)\Rockstar Games\Grand Theft Auto V\GTA5.exe",
+        "C:\Rockstar Games\Grand Theft Auto V\GTA5.exe",
         "C:\Program Files (x86)\Steam\steamapps\common\Grand Theft Auto V\GTA5.exe",
+        "C:\Steam\steamapps\common\Grand Theft Auto V\GTA5.exe",
+        "C:\Program Files\Epic Games\GTAV\GTA5.exe",
         "D:\SteamLibrary\steamapps\common\Grand Theft Auto V\GTA5.exe",
         "E:\SteamLibrary\steamapps\common\Grand Theft Auto V\GTA5.exe",
         "F:\SteamLibrary\steamapps\common\Grand Theft Auto V\GTA5.exe"
     )
 }
 
+function Get-SteamLibraryRoots {
+    $roots = New-Object System.Collections.Generic.List[string]
+    $defaultRoots = @(
+        "C:\Program Files (x86)\Steam",
+        "C:\Steam"
+    )
+
+    $registrySources = @(
+        @{ Path = "HKCU:\Software\Valve\Steam";                    Name = "SteamPath"   },
+        @{ Path = "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam";        Name = "InstallPath" },
+        @{ Path = "HKLM:\SOFTWARE\Valve\Steam";                    Name = "InstallPath" }
+    )
+
+    foreach ($entry in $registrySources) {
+        try {
+            $value = (Get-ItemProperty -Path $entry.Path -Name $entry.Name -ErrorAction Stop).$($entry.Name)
+            if ($value -and (Test-Path $value)) {
+                $roots.Add($value)
+            }
+        }
+        catch {
+            # Steam may not be installed from this source.
+        }
+    }
+
+    foreach ($root in $defaultRoots) {
+        if (Test-Path $root) {
+            $roots.Add($root)
+        }
+    }
+
+    $libraryRoots = New-Object System.Collections.Generic.List[string]
+
+    foreach ($root in ($roots | Sort-Object -Unique)) {
+        $libraryRoots.Add($root)
+
+        $vdfPath = Join-Path $root "steamapps\libraryfolders.vdf"
+        if (-not (Test-Path $vdfPath)) {
+            continue
+        }
+
+        try {
+            $vdf = Get-Content -Path $vdfPath -Raw -ErrorAction Stop
+            $matches = [regex]::Matches($vdf, '"path"\s+"([^"]+)"')
+            foreach ($match in $matches) {
+                $libraryPath = $match.Groups[1].Value -replace '\\\\', '\'
+                if ($libraryPath -and (Test-Path $libraryPath)) {
+                    $libraryRoots.Add($libraryPath)
+                }
+            }
+        }
+        catch {
+            Write-Log "Unable to parse Steam library folders: $($_.Exception.Message)" "WARN"
+        }
+    }
+
+    return $libraryRoots | Sort-Object -Unique
+}
+
+function Get-GTAPathFromSteam {
+    foreach ($libraryRoot in Get-SteamLibraryRoots) {
+        $candidate = Join-Path $libraryRoot "steamapps\common\Grand Theft Auto V\GTA5.exe"
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
+function Get-GTAPathFromEpic {
+    $manifestRoot = Join-Path $env:ProgramData "Epic\EpicGamesLauncher\Data\Manifests"
+    if (-not (Test-Path $manifestRoot)) {
+        return $null
+    }
+
+    try {
+        $items = Get-ChildItem -Path $manifestRoot -Filter "*.item" -ErrorAction SilentlyContinue
+        foreach ($item in $items) {
+            try {
+                $manifest = Get-Content -Path $item.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                $label = "$($manifest.DisplayName) $($manifest.AppName)"
+
+                if ($label -notmatch "Grand Theft Auto V|GTA V|GTAV") {
+                    continue
+                }
+
+                if ($manifest.InstallLocation) {
+                    $candidate = Join-Path $manifest.InstallLocation "GTA5.exe"
+                    if (Test-Path $candidate) {
+                        return $candidate
+                    }
+                }
+            }
+            catch {
+                Write-Log "Skipping unreadable Epic manifest: $($item.Name)" "WARN"
+            }
+        }
+    }
+    catch {
+        Write-Log "Epic manifest scan failed: $($_.Exception.Message)" "WARN"
+    }
+
+    return $null
+}
+
+function Get-GTAPathFromRockstar {
+    $launcherDat = Join-Path $env:ProgramData "Rockstar Games\Launcher\LauncherInstalled.dat"
+    if (Test-Path $launcherDat) {
+        try {
+            $data = Get-Content -Path $launcherDat -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            foreach ($game in @($data.games)) {
+                $gameLabel = "$($game.title) $($game.name)"
+                if ($gameLabel -notmatch "Grand Theft Auto V|GTA V|GTAV") {
+                    continue
+                }
+
+                $installFolder = $game.installFolder
+                if (-not $installFolder) {
+                    $installFolder = $game.installPath
+                }
+
+                if ($installFolder) {
+                    $candidate = Join-Path $installFolder "GTA5.exe"
+                    if (Test-Path $candidate) {
+                        return $candidate
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Log "Rockstar launcher data scan failed: $($_.Exception.Message)" "WARN"
+        }
+    }
+
+    try {
+        $rockstarKey = "HKLM:\SOFTWARE\WOW6432Node\Rockstar Games\Grand Theft Auto V"
+        if (Test-Path $rockstarKey) {
+            $installFolder = (Get-ItemProperty -Path $rockstarKey -ErrorAction Stop).InstallFolder
+            if ($installFolder) {
+                $candidate = Join-Path $installFolder "GTA5.exe"
+                if (Test-Path $candidate) {
+                    return $candidate
+                }
+            }
+        }
+    }
+    catch {
+        Write-Log "Rockstar registry scan failed: $($_.Exception.Message)" "WARN"
+    }
+
+    return $null
+}
+
 function Get-GTAInstallPath {
-    $common = Get-CommonGTAPaths
-    foreach ($path in $common) {
+    foreach ($path in Get-CommonGTAPaths) {
         if (Test-Path $path) {
             return $path
         }
     }
+
+    $steamPath = Get-GTAPathFromSteam
+    if ($steamPath) { return $steamPath }
+
+    $epicPath = Get-GTAPathFromEpic
+    if ($epicPath) { return $epicPath }
+
+    $rockstarPath = Get-GTAPathFromRockstar
+    if ($rockstarPath) { return $rockstarPath }
 
     try {
         $uninstallKeys = @(
@@ -271,28 +436,190 @@ function Get-GTAInstallPath {
 
     return $null
 }
+
+function Resolve-FiveMInstallInfo {
+    $candidates = New-Object System.Collections.Generic.List[object]
+
+    $candidates.Add([PSCustomObject]@{
+        Source      = "LocalAppData default"
+        ExePath     = Join-Path $Script:Paths.FiveMApp "FiveM.exe"
+        AppDataPath = $Script:Paths.FiveMApplicationData
+    })
+
+    $candidates.Add([PSCustomObject]@{
+        Source      = "LocalAppData root fallback"
+        ExePath     = Join-Path $Script:Paths.FiveMRoot "FiveM.exe"
+        AppDataPath = $Script:Paths.FiveMApplicationData
+    })
+
+    $programFilesCandidates = @(
+        "$env:ProgramFiles\FiveM\FiveM.exe",
+        "${env:ProgramFiles(x86)}\FiveM\FiveM.exe"
+    )
+
+    foreach ($exe in $programFilesCandidates) {
+        if (-not [string]::IsNullOrWhiteSpace($exe)) {
+            $appDataCandidate = Join-Path (Split-Path $exe -Parent) "FiveM Application Data"
+            $candidates.Add([PSCustomObject]@{
+                Source      = "Program Files fallback"
+                ExePath     = $exe
+                AppDataPath = $appDataCandidate
+            })
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate.ExePath) {
+            return [PSCustomObject]@{
+                Installed       = $true
+                Source          = $candidate.Source
+                ExePath         = $candidate.ExePath
+                AppDataPath     = $candidate.AppDataPath
+                InstallRootPath = Split-Path $candidate.ExePath -Parent
+            }
+        }
+    }
+
+    try {
+        $uninstallKeys = @(
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+
+        $entry = Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.DisplayName -and $_.DisplayName -match "FiveM|CitizenFX"
+            } |
+            Select-Object -First 1
+
+        if ($entry) {
+            $possibleExe = @()
+            if ($entry.DisplayIcon) {
+                $iconPath = $entry.DisplayIcon -replace '",\d+$', '' -replace '^"', ''
+                if ($iconPath) { $possibleExe += $iconPath }
+            }
+
+            if ($entry.InstallLocation) {
+                $possibleExe += (Join-Path $entry.InstallLocation "FiveM.exe")
+                $possibleExe += (Join-Path $entry.InstallLocation "FiveM.app\FiveM.exe")
+            }
+
+            foreach ($exe in ($possibleExe | Where-Object { $_ } | Select-Object -Unique)) {
+                if (Test-Path $exe) {
+                    $appDataPath = Join-Path (Split-Path $exe -Parent) "FiveM Application Data"
+                    return [PSCustomObject]@{
+                        Installed       = $true
+                        Source          = "Uninstall registry"
+                        ExePath         = $exe
+                        AppDataPath     = $appDataPath
+                        InstallRootPath = Split-Path $exe -Parent
+                    }
+                }
+            }
+        }
+    }
+    catch {
+        Write-Log "FiveM detection via uninstall registry failed: $($_.Exception.Message)" "WARN"
+    }
+
+    try {
+        $proc = Get-Process -Name "FiveM" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($proc) {
+            $exe = $proc.Path
+            if (-not $exe) {
+                $exe = $proc.MainModule.FileName
+            }
+
+            if ($exe -and (Test-Path $exe)) {
+                $appDataPath = Join-Path (Split-Path $exe -Parent) "FiveM Application Data"
+                return [PSCustomObject]@{
+                    Installed       = $true
+                    Source          = "Running process"
+                    ExePath         = $exe
+                    AppDataPath     = $appDataPath
+                    InstallRootPath = Split-Path $exe -Parent
+                }
+            }
+        }
+    }
+    catch {
+        Write-Log "FiveM process-based detection failed: $($_.Exception.Message)" "WARN"
+    }
+
+    return [PSCustomObject]@{
+        Installed       = $false
+        Source          = "Not found"
+        ExePath         = $null
+        AppDataPath     = $null
+        InstallRootPath = $null
+    }
+}
 #endregion Helpers
 
 #region Detection / Diagnostics
 function Test-FiveMInstalled {
-    $exists = (Test-Path $Script:Paths.FiveMApp) -or (Test-Path $Script:Paths.FiveMApplicationData)
-    if ($exists) {
-        Write-Log "FiveM installation detected." "SUCCESS"
+    $info = Resolve-FiveMInstallInfo
+    if ($info.Installed) {
+        Write-Log "FiveM installation detected via source: $($info.Source)" "SUCCESS"
     }
     else {
-        Write-Log "FiveM installation not detected in LocalAppData." "WARN"
+        Write-Log "FiveM installation not detected." "WARN"
     }
-    return $exists
+    return [bool]$info.Installed
 }
 
 function Get-FiveMExecutablePath {
-    $exe = Join-Path $Script:Paths.FiveMApp "FiveM.exe"
-    if (Test-Path $exe) { return $exe }
+    $info = Resolve-FiveMInstallInfo
+    return $info.ExePath
+}
+
+function Get-FiveMInstallSource {
+    $info = Resolve-FiveMInstallInfo
+    return $info.Source
+}
+
+function Get-FiveMAppDataPath {
+    $info = Resolve-FiveMInstallInfo
+    if ($info.AppDataPath -and (Test-Path $info.AppDataPath)) {
+        return $info.AppDataPath
+    }
+
+    if (Test-Path $Script:Paths.FiveMApplicationData) {
+        return $Script:Paths.FiveMApplicationData
+    }
+
     return $null
 }
 
+function Get-FiveMEffectivePaths {
+    $appDataPath = Get-FiveMAppDataPath
+    if (-not $appDataPath) {
+        $appDataPath = $Script:Paths.FiveMApplicationData
+    }
+
+    $dataPath = Join-Path $appDataPath "data"
+
+    return @{
+        FiveMApplicationData = $appDataPath
+        FiveMData            = $dataPath
+        FiveMCrashes         = Join-Path $appDataPath "Crashes"
+        ServerCachePriv      = Join-Path $dataPath "server-cache-priv"
+        ServerCache          = Join-Path $dataPath "server-cache"
+        NuiStorage           = Join-Path $dataPath "nui-storage"
+    }
+}
+
 function Get-FiveMVersion {
-    $exe = Get-FiveMExecutablePath
+    param(
+        [string]$ExePath
+    )
+
+    $exe = $ExePath
+    if (-not $exe) {
+        $exe = Get-FiveMExecutablePath
+    }
+
     if ($exe -and (Test-Path $exe)) {
         try {
             return (Get-Item $exe).VersionInfo.FileVersion
@@ -372,9 +699,10 @@ function Get-GPUInfo {
 }
 
 function Test-FiveMCrashPresence {
-    if (Test-Path $Script:Paths.FiveMCrashes) {
+    $paths = Get-FiveMEffectivePaths
+    if (Test-Path $paths.FiveMCrashes) {
         try {
-            $count = (Get-ChildItem -Path $Script:Paths.FiveMCrashes -Force -ErrorAction SilentlyContinue | Measure-Object).Count
+            $count = (Get-ChildItem -Path $paths.FiveMCrashes -Force -ErrorAction SilentlyContinue | Measure-Object).Count
             Write-Log "Crash folder item count: $count" "INFO"
             return $count
         }
@@ -395,11 +723,14 @@ function Get-SystemDiagnostics {
     $gpu         = Get-GPUInfo
     $dns         = Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue
     $wu          = Get-WindowsUpdateStatus
-    $fivemVer    = Get-FiveMVersion
+    $fivemInfo   = Resolve-FiveMInstallInfo
     $gtaPath     = Get-GTAInstallPath
-    $fivemExe    = Get-FiveMExecutablePath
+    $fivemExe    = $fivemInfo.ExePath
+    $fivemVer    = Get-FiveMVersion -ExePath $fivemExe
+    $fivemSource = $fivemInfo.Source
+    $fivemData   = Get-FiveMAppDataPath
     $crashCount  = Test-FiveMCrashPresence
-    $fivemFound  = Test-FiveMInstalled
+    $fivemFound  = [bool]$fivemInfo.Installed
 
     $diag = [PSCustomObject]@{
         ComputerName     = $env:COMPUTERNAME
@@ -415,9 +746,10 @@ function Get-SystemDiagnostics {
         SystemDriveFree  = if ($disk) { $disk.FreeGB } else { $null }
         SystemDriveTotal = if ($disk) { $disk.TotalGB } else { $null }
         FiveMInstalled   = $fivemFound
+        FiveMSource      = $fivemSource
         FiveMVersion     = $fivemVer
         FiveMExe         = $fivemExe
-        FiveMPath        = $Script:Paths.FiveMApplicationData
+        FiveMPath        = $fivemData
         GTAPath          = $gtaPath
         DNS              = ($dns | ForEach-Object { "$($_.InterfaceAlias): $($_.ServerAddresses -join ', ')" }) -join " | "
         WinUpdateLastOK  = if ($wu) { $wu.LastSuccessTime } else { $null }
@@ -425,7 +757,7 @@ function Get-SystemDiagnostics {
         CrashFolderCount = $crashCount
     }
 
-    Write-Log "Diagnostics collected. FiveM installed: $fivemFound | GTA found: $([bool]$gtaPath) | Crash items: $crashCount" "INFO"
+    Write-Log "Diagnostics collected. FiveM installed: $fivemFound ($fivemSource) | GTA found: $([bool]$gtaPath) | Crash items: $crashCount" "INFO"
 
     if ($disk) {
         Write-Log "Disk free space: $($disk.FreeGB) GB on $($disk.Drive)" "INFO"
@@ -477,10 +809,11 @@ function Stop-GameProcesses {
 #region Repair Actions
 function Clear-FiveMCache {
     Write-Log "Clearing FiveM cache folders..." "ACTION"
+    $paths = Get-FiveMEffectivePaths
 
     $cacheTargets = @(
-        $Script:Paths.ServerCachePriv,
-        $Script:Paths.ServerCache
+        $paths.ServerCachePriv,
+        $paths.ServerCache
     )
 
     foreach ($target in $cacheTargets) {
@@ -498,21 +831,23 @@ function Clear-FiveMCache {
 
 function Clear-FiveMCrashLogs {
     Write-Log "Clearing FiveM crash logs..." "ACTION"
+    $paths = Get-FiveMEffectivePaths
 
-    if (Test-Path $Script:Paths.FiveMCrashes) {
-        Remove-ChildItemsSafely -Path $Script:Paths.FiveMCrashes
+    if (Test-Path $paths.FiveMCrashes) {
+        Remove-ChildItemsSafely -Path $paths.FiveMCrashes
         Write-Log "Crash log cleanup complete." "SUCCESS"
     }
     else {
-        Write-Log "Crash folder not found: $($Script:Paths.FiveMCrashes)" "WARN"
+        Write-Log "Crash folder not found: $($paths.FiveMCrashes)" "WARN"
     }
 }
 
 function Clear-FiveMLocalFiles {
     Write-Log "Clearing additional FiveM local files..." "ACTION"
+    $paths = Get-FiveMEffectivePaths
 
     $targets = @(
-        $Script:Paths.NuiStorage
+        $paths.NuiStorage
     )
 
     $clearedAny = $false
@@ -568,10 +903,11 @@ function Set-CloudflareDNS {
 }
 
 function Open-FiveMFiles {
+    $paths = Get-FiveMEffectivePaths
     $folders = @(
-        $Script:Paths.FiveMApplicationData,
-        $Script:Paths.FiveMCrashes,
-        $Script:Paths.ServerCachePriv
+        $paths.FiveMApplicationData,
+        $paths.FiveMCrashes,
+        $paths.ServerCachePriv
     )
 
     foreach ($folder in $folders) {
@@ -676,6 +1012,7 @@ function New-SupportSummaryText {
     $lines += "Game Detection"
     $lines += "-------------"
     $lines += "FiveM Installed: $($Diagnostics.FiveMInstalled)"
+    $lines += "FiveM Detection Source: $($Diagnostics.FiveMSource)"
     $lines += "FiveM Version: $($Diagnostics.FiveMVersion)"
     $lines += "FiveM EXE: $($Diagnostics.FiveMExe)"
     $lines += "FiveM Path: $($Diagnostics.FiveMPath)"
