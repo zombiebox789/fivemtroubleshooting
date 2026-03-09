@@ -452,6 +452,8 @@ function Show-ActionHistory {
 #region Process Handling
 function Stop-GameProcesses {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    param()
+
     $targets = @(
         "FiveM",
         "GTA5",
@@ -487,6 +489,8 @@ function Stop-GameProcesses {
 #region Repair Actions
 function Clear-FiveMCache {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    param()
+
     Write-Log "Clearing FiveM cache folders..." "ACTION"
 
     $cacheTargets = @(
@@ -511,6 +515,8 @@ function Clear-FiveMCache {
 
 function Clear-FiveMCrashLogs {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    param()
+
     Write-Log "Clearing FiveM crash logs..." "ACTION"
 
     if (Test-Path $Script:Paths.FiveMCrashes) {
@@ -526,6 +532,8 @@ function Clear-FiveMCrashLogs {
 
 function Clear-FiveMLocalFiles {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    param()
+
     Write-Log "Clearing additional FiveM local files..." "ACTION"
 
     $targets = @(
@@ -557,6 +565,8 @@ function Clear-FiveMLocalFiles {
 
 function Reset-NetworkStack {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    param()
+
     if (-not $PSCmdlet.ShouldProcess("Network stack", "Flush DNS and reset Winsock/IP stack")) {
         Write-Log "Network reset cancelled by ShouldProcess." "INFO"
         return
@@ -586,6 +596,8 @@ function Reset-NetworkStack {
 
 function Set-CloudflareDNS {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    param()
+
     $adapters = Get-ActiveAdapters
     if (-not $adapters -or $adapters.Count -eq 0) {
         throw "No active network adapters found."
