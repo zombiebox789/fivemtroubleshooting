@@ -13,13 +13,10 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.5.0"
+$Script:Version        = "2.5.1"
 $Script:CompanyName    = "Insomnia Studios"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
-
-$Script:RepoVersionUrl = "https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/version.txt"
-$Script:RepoScriptUrl  = "https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/FiveM-Troubleshooting.ps1"
 
 $Script:BaseFolder     = Join-Path $env:TEMP "FiveM-Troubleshooter"
 $Script:LogFolder      = $Script:BaseFolder
@@ -555,6 +552,20 @@ function Resolve-FiveMInstallInfo {
         InstallRootPath = $null
     }
 }
+
+function Invoke-ExternalCommandChecked {
+    param(
+        [Parameter(Mandatory)][string]$Command,
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory)][string]$Description
+    )
+
+    & $Command @Arguments | Out-Null
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "$Description failed with exit code $exitCode."
+    }
+}
 #endregion Helpers
 
 #region Detection / Diagnostics
@@ -873,13 +884,16 @@ function Clear-FiveMLocalFiles {
 
 function Reset-NetworkStack {
     Write-Log "Flushing DNS..." "ACTION"
-    ipconfig /flushdns | Out-Null
+    Invoke-ExternalCommandChecked -Command "ipconfig.exe" -Arguments @("/flushdns") -Description "DNS flush"
+    Write-Log "DNS flush complete." "SUCCESS"
 
     Write-Log "Resetting Winsock..." "ACTION"
-    netsh winsock reset | Out-Null
+    Invoke-ExternalCommandChecked -Command "netsh.exe" -Arguments @("winsock","reset") -Description "Winsock reset"
+    Write-Log "Winsock reset complete." "SUCCESS"
 
     Write-Log "Resetting IP stack..." "ACTION"
-    netsh int ip reset | Out-Null
+    Invoke-ExternalCommandChecked -Command "netsh.exe" -Arguments @("int","ip","reset") -Description "IP stack reset"
+    Write-Log "IP stack reset complete." "SUCCESS"
 
     $Script:RestartNeeded = $true
     Write-Log "Network reset complete. Restart is recommended." "SUCCESS"
@@ -941,47 +955,6 @@ function Invoke-RestartPrompt {
     }
 }
 #endregion Restart
-
-#region Self Update
-function Test-ForUpdates {
-    Write-Log "Checking for script updates..." "ACTION"
-    try {
-        $latest = (Invoke-WebRequest -Uri $Script:RepoVersionUrl -UseBasicParsing -ErrorAction Stop).Content.Trim()
-        Write-Log "Current version: $($Script:Version) | Latest version: $latest" "INFO"
-
-        if ($latest -and $latest -ne $Script:Version) {
-            Write-Log "Update available." "WARN"
-            return $latest
-        }
-
-        Write-Log "You are on the latest version." "SUCCESS"
-        return $null
-    }
-    catch {
-        Write-Log "Update check failed: $($_.Exception.Message)" "WARN"
-        return $null
-    }
-}
-
-function Update-ScriptFromGitHub {
-    $latest = Test-ForUpdates
-    if (-not $latest) { return }
-
-    try {
-        if (-not (Test-Path $Script:TempFolder)) {
-            New-Item -Path $Script:TempFolder -ItemType Directory -Force | Out-Null
-        }
-
-        $tempScript = Join-Path $Script:TempFolder "FiveM-Troubleshooting_v$latest.ps1"
-        Invoke-WebRequest -Uri $Script:RepoScriptUrl -OutFile $tempScript -UseBasicParsing -ErrorAction Stop
-        Write-Log "Downloaded latest script to: $tempScript" "SUCCESS"
-        Write-Log "You can replace the current local script with this downloaded copy." "INFO"
-    }
-    catch {
-        Write-Log "Failed to download latest script: $($_.Exception.Message)" "ERROR"
-    }
-}
-#endregion Self Update
 
 #region Export
 function New-SupportSummaryText {
@@ -1114,11 +1087,6 @@ function Show-MainMenu {
         Write-Host "9. View Action History"
         Write-Host
 
-        Write-Host "--- Updates ---" -ForegroundColor Cyan
-        Write-Host "10. Check for Updates"
-        Write-Host "11. Download Latest Version"
-        Write-Host
-
         Write-Host "0. Exit"
         Write-Host
 
@@ -1134,8 +1102,6 @@ function Show-MainMenu {
             "7"  { Invoke-Safely -ActionName "Open FiveM Files" -ScriptBlock { Open-FiveMFiles } | Out-Null; Pause-Console }
             "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
             "9"  { Show-ActionHistory; Pause-Console }
-            "10" { Test-ForUpdates | Out-Null; Pause-Console }
-            "11" { Update-ScriptFromGitHub; Pause-Console }
             "0"  {
                 Write-Log "Exiting tool." "INFO"
                 break
