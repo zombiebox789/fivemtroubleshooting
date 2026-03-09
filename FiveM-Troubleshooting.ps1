@@ -1,539 +1,914 @@
-<# 
-FiveM Troubleshooting - Menu Tool
-Save as: FiveM-Troubleshooting.ps1
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    FiveM Troubleshooter v2.2
 
-Recommended run (Admin):
-powershell -ExecutionPolicy Bypass -File "C:\Path\FiveM-Troubleshooting.ps1"
+.DESCRIPTION
+    Menu-driven FiveM troubleshooting and diagnostics utility.
+    Built as a PowerShell backend that can later be wrapped into a GUI.
+
+.NOTES
+    Recommended to run as Administrator.
 #>
 
-$ErrorActionPreference = "Stop"
+#region Config
+$Script:ToolName       = "FiveM Troubleshooter"
+$Script:Version        = "2.2.0"
+$Script:CompanyName    = "Insomnia Studios"
+$Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
+$Script:StartTime      = Get-Date
 
-#region Helpers
+$Script:RepoVersionUrl = "https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/version.txt"
+$Script:RepoScriptUrl  = "https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/FiveM-Troubleshooting.ps1"
 
-function Test-IsAdmin {
-    $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$Script:BaseFolder     = Join-Path $env:ProgramData "FiveM-Troubleshooter"
+$Script:LogFolder      = Join-Path $Script:BaseFolder "Logs"
+$Script:ExportFolder   = Join-Path $Script:BaseFolder "Exports"
+$Script:TempFolder     = Join-Path $Script:BaseFolder "Temp"
+$Script:LogFile        = Join-Path $Script:LogFolder "FiveM-Troubleshooter_$($Script:SessionId).log"
+
+$Script:History        = New-Object System.Collections.Generic.List[object]
+$Script:Results        = New-Object System.Collections.Generic.List[object]
+$Script:RestartNeeded  = $false
+
+$Script:Paths = @{
+    FiveMRoot            = Join-Path $env:LocalAppData "FiveM"
+    FiveMApp             = Join-Path $env:LocalAppData "FiveM\FiveM.app"
+    FiveMApplicationData = Join-Path $env:LocalAppData "FiveM\FiveM Application Data"
+    FiveMData            = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\data"
+    FiveMCrashes         = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\Crashes"
+    ServerCachePriv      = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\data\server-cache-priv"
+    ServerCache          = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\data\server-cache"
+    NuiStorage           = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\data\nui-storage"
+    Temp                 = $env:TEMP
+    Desktop              = [Environment]::GetFolderPath("Desktop")
+}
+#endregion Config
+
+#region Bootstrap
+function Initialize-Environment {
+    foreach ($folder in @($Script:BaseFolder, $Script:LogFolder, $Script:ExportFolder, $Script:TempFolder)) {
+        if (-not (Test-Path $folder)) {
+            New-Item -Path $folder -ItemType Directory -Force | Out-Null
+        }
+    }
+}
+
+function Write-Log {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message,
+
+        [ValidateSet("INFO","WARN","ERROR","SUCCESS","ACTION")]
+        [string]$Level = "INFO"
+    )
+
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $entry = "[$timestamp] [$Level] $Message"
+
+    switch ($Level) {
+        "INFO"    { Write-Host $entry -ForegroundColor Cyan }
+        "WARN"    { Write-Host $entry -ForegroundColor Yellow }
+        "ERROR"   { Write-Host $entry -ForegroundColor Red }
+        "SUCCESS" { Write-Host $entry -ForegroundColor Green }
+        "ACTION"  { Write-Host $entry -ForegroundColor Magenta }
+    }
+
+    Add-Content -Path $Script:LogFile -Value $entry
+
+    $Script:History.Add([PSCustomObject]@{
+        Time    = $timestamp
+        Level   = $Level
+        Message = $Message
+    })
+}
+
+function Add-Result {
+    param(
+        [string]$Step,
+        [ValidateSet("SUCCESS","WARN","ERROR","INFO")]
+        [string]$Status,
+        [string]$Details
+    )
+
+    $Script:Results.Add([PSCustomObject]@{
+        Time    = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        Step    = $Step
+        Status  = $Status
+        Details = $Details
+    })
+}
+
+function Show-Banner {
+    Clear-Host
+    Write-Host "============================================================" -ForegroundColor DarkCyan
+    Write-Host " $($Script:ToolName) v$($Script:Version)" -ForegroundColor White
+    Write-Host " $($Script:CompanyName)" -ForegroundColor Gray
+    Write-Host " Session: $($Script:SessionId)" -ForegroundColor Gray
+    Write-Host "============================================================" -ForegroundColor DarkCyan
+    Write-Host
 }
 
 function Pause-Console {
-    Write-Host ""
-    Read-Host "Press ENTER to return to the menu..." | Out-Null
+    Write-Host
+    Read-Host "Press Enter to continue"
 }
 
-function Wait-BeforeExit {
-    Write-Host ""
-    Write-Host "============================================================" -ForegroundColor DarkGray
-    Write-Host "Script finished. Press ENTER to close..." -ForegroundColor Gray
-    Write-Host "============================================================" -ForegroundColor DarkGray
-    Read-Host | Out-Null
-}
-
-function Write-Title {
-    param([string]$Text)
-    Clear-Host
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "   $Text" -ForegroundColor Cyan
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host ""
-}
-
-function Get-FiveMBasePath {
-    $default = Join-Path $env:LOCALAPPDATA "FiveM\FiveM.app"
-    if (Test-Path $default) { return $default }
-
-    # Quick fallbacks (common roots)
-    $candidates = @(
-        "C:\FiveM\FiveM.app",
-        "D:\FiveM\FiveM.app",
-        "E:\FiveM\FiveM.app"
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) { return $c }
-    }
-
-    # Return default even if missing so we can show a helpful message
-    return $default
-}
-
-function Remove-ContentsSafe {
+function Show-ProgressStep {
     param(
-        [Parameter(Mandatory=$true)][string]$Path,
-        [string]$MissingMessage = "Please let support know this folder location does not exist."
+        [int]$Current,
+        [int]$Total,
+        [string]$Activity,
+        [string]$Status
     )
 
-    if (-not (Test-Path $Path)) {
-        Write-Host "[!] Not Found: $Path" -ForegroundColor Yellow
-        Write-Host "    $MissingMessage" -ForegroundColor Yellow
-        return
-    }
-
-    Write-Host "[*] Deleting contents of: $Path" -ForegroundColor Green
-
-    Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue | ForEach-Object {
-        try {
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
-        } catch {
-            Write-Host "[!] Failed to delete: $($_.FullName)" -ForegroundColor Yellow
-            Write-Host "    $($_.Exception.Message)" -ForegroundColor DarkYellow
-        }
-    }
-
-    Write-Host "[+] Done." -ForegroundColor Green
+    $percent = [math]::Round(($Current / $Total) * 100, 0)
+    Write-Progress -Activity $Activity -Status $Status -PercentComplete $percent
 }
 
-function Convert-CimDateSafe {
+function Read-YesNo {
     param(
-        [AllowNull()][AllowEmptyString()][string]$CimDate
-    )
-    if ([string]::IsNullOrWhiteSpace($CimDate)) { return "Unknown" }
-    try {
-        return [Management.ManagementDateTimeConverter]::ToDateTime($CimDate)
-    } catch {
-        return "Unknown"
-    }
-}
-
-function Get-GpuInfoFromRegistry {
-    <#
-      Returns objects with:
-        - Name  (HardwareInformation.AdapterString)
-        - VramGB (from HardwareInformation.qwMemorySize)
-      This is typically more accurate than Win32_VideoController.AdapterRAM on modern GPUs.
-    #>
-    $results = @()
-
-    try {
-        $videoRoot = "HKLM:\SYSTEM\CurrentControlSet\Control\Video"
-        if (-not (Test-Path $videoRoot)) { return @() }
-
-        foreach ($guidKey in (Get-ChildItem $videoRoot -ErrorAction SilentlyContinue)) {
-            $p = Join-Path $guidKey.PSPath "0000"
-            if (-not (Test-Path $p)) { continue }
-
-            $props = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue
-            $name = $props."HardwareInformation.AdapterString"
-            $memBytes = $props."HardwareInformation.qwMemorySize"
-
-            if (-not $name -and -not $memBytes) { continue }
-
-            $vramGB = "Unknown"
-            if ($memBytes -and ($memBytes -is [ValueType] -or $memBytes -is [string])) {
-                try { $vramGB = [Math]::Round(([double]$memBytes / 1GB), 0) } catch { $vramGB = "Unknown" }
-            }
-
-            $results += [PSCustomObject]@{
-                Name   = $name
-                VramGB = $vramGB
-                Path   = $p
-            }
-        }
-    } catch {
-        return @()
-    }
-
-    # De-dup by Name+VramGB
-    $results | Where-Object { $_.Name -or $_.VramGB -ne "Unknown" } |
-        Group-Object Name, VramGB | ForEach-Object { $_.Group | Select-Object -First 1 }
-}
-
-function Get-GpuVramForName {
-    param(
-        [Parameter(Mandatory=$true)][string]$GpuName
+        [string]$Prompt = "Continue? (Y/N)",
+        [bool]$DefaultYes = $true
     )
 
-    $regGpus = Get-GpuInfoFromRegistry
-    if (-not $regGpus -or $regGpus.Count -eq 0) { return "Unknown" }
-
-    # Best match: exact, then contains (either direction)
-    $exact = $regGpus | Where-Object { $_.Name -and ($_.Name -eq $GpuName) } | Select-Object -First 1
-    if ($exact) { return $exact.VramGB }
-
-    $contains1 = $regGpus | Where-Object { $_.Name -and ($_.Name -like "*$GpuName*") } | Select-Object -First 1
-    if ($contains1) { return $contains1.VramGB }
-
-    $contains2 = $regGpus | Where-Object { $_.Name -and ($GpuName -like "*$($_.Name)*") } | Select-Object -First 1
-    if ($contains2) { return $contains2.VramGB }
-
-    # Fallback: first VRAM we have
-    $any = $regGpus | Where-Object { $_.VramGB -ne "Unknown" } | Select-Object -First 1
-    if ($any) { return $any.VramGB }
-
-    return "Unknown"
-}
-
-#endregion Helpers
-
-#region Logging
-
-function Get-LogFolder {
-    Join-Path $env:USERPROFILE "Desktop\FiveM-Troubleshooting-Logs"
-}
-
-function Start-Logging {
-    $logDir = Get-LogFolder
-    if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
-
-    $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-    $logPath = Join-Path $logDir "FiveM_Troubleshooting_$stamp.txt"
-
-    try {
-        Start-Transcript -Path $logPath -Append | Out-Null
-        Write-Host "[+] Logging to: $logPath" -ForegroundColor Green
-    } catch {
-        Write-Host "[!] Could not start transcript logging: $($_.Exception.Message)" -ForegroundColor Yellow
-    }
-}
-
-function Stop-Logging {
-    try { Stop-Transcript | Out-Null } catch {}
-}
-
-function Get-LatestLogFile {
-    $logDir = Get-LogFolder
-    if (-not (Test-Path $logDir)) { return $null }
-
-    Get-ChildItem -Path $logDir -Filter "*.txt" -File -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-}
-
-#endregion Logging
-
-#region Reports
-
-function New-PCSpecsReport {
-    param(
-        [Parameter(Mandatory=$true)][string]$OutputPath
-    )
-
-    Write-Host "[*] Collecting PC specs..." -ForegroundColor Cyan
-
-    $os   = Get-CimInstance Win32_OperatingSystem
-    $cs   = Get-CimInstance Win32_ComputerSystem
-    $cpu  = Get-CimInstance Win32_Processor | Select-Object -First 1
-    $bios = Get-CimInstance Win32_BIOS
-    $gpus = Get-CimInstance Win32_VideoController
-    $disks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
-    $nics  = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -eq $true }
-
-    $ramGB = [Math]::Round(($cs.TotalPhysicalMemory / 1GB), 2)
-
-    $installDate = Convert-CimDateSafe -CimDate $os.InstallDate
-    $lastBoot    = Convert-CimDateSafe -CimDate $os.LastBootUpTime
-    $biosDate    = Convert-CimDateSafe -CimDate $bios.ReleaseDate
-
-    $lines = New-Object System.Collections.Generic.List[string]
-    $lines.Add("PC Specs Report")
-    $lines.Add("Generated: $(Get-Date)")
-    $lines.Add("------------------------------------------------------------")
-    $lines.Add("Computer Name: $($env:COMPUTERNAME)")
-    $lines.Add("User: $($env:USERNAME)")
-    $lines.Add("")
-    $lines.Add("OS: $($os.Caption)  (Build $($os.BuildNumber))")
-    $lines.Add("Version: $($os.Version)")
-    $lines.Add("Install Date: $installDate")
-    $lines.Add("Last Boot: $lastBoot")
-    $lines.Add("")
-    $lines.Add("Motherboard/Model: $($cs.Manufacturer) $($cs.Model)")
-    $lines.Add("BIOS: $($bios.Manufacturer) $($bios.SMBIOSBIOSVersion)  (Released $biosDate)")
-    $lines.Add("")
-    $lines.Add("CPU: $($cpu.Name)")
-    $lines.Add("Cores/Threads: $($cpu.NumberOfCores)/$($cpu.NumberOfLogicalProcessors)")
-    $lines.Add("RAM (GB): $ramGB")
-    $lines.Add("")
-    $lines.Add("GPU(s):")
-
-    foreach ($g in $gpus) {
-        $vram = Get-GpuVramForName -GpuName $g.Name
-        $lines.Add("  - $($g.Name) (VRAM: $vram GB)")
-    }
-
-    $lines.Add("")
-    $lines.Add("Storage (Fixed Disks):")
-    foreach ($d in $disks) {
-        $sizeGB = if ($d.Size) { [Math]::Round(($d.Size/1GB), 2) } else { "Unknown" }
-        $freeGB = if ($d.FreeSpace) { [Math]::Round(($d.FreeSpace/1GB), 2) } else { "Unknown" }
-        $lines.Add("  - $($d.DeviceID)  Label: $($d.VolumeName)  Free: $freeGB GB / $sizeGB GB  FileSystem: $($d.FileSystem)")
-    }
-
-    $lines.Add("")
-    $lines.Add("Network (IP-enabled adapters):")
-    foreach ($n in $nics) {
-        $ips = ($n.IPAddress -join ", ")
-        $lines.Add("  - $($n.Description)")
-        $lines.Add("    IP: $ips")
-    }
-
-    $lines.Add("")
-    $lines.Add("------------------------------------------------------------")
-    $lines.Add("Notes:")
-    $lines.Add("- Mention where FiveM/GTA is installed (C:, D:, etc.)")
-    $lines.Add("- Attach this file + the log ZIP to the Discord ticket.")
-
-    $lines | Out-File -LiteralPath $OutputPath -Encoding UTF8 -Force
-    Write-Host "[+] Specs saved to: $OutputPath" -ForegroundColor Green
-}
-
-#endregion Reports
-
-#region Actions
-
-function Run-SFC {
-    Write-Title "System File Checker (SFC)"
-    Write-Host "[*] Running: sfc /scannow" -ForegroundColor Green
-    Write-Host "    This can take a while. Don’t close the window." -ForegroundColor Gray
-    sfc /scannow
-    Write-Host "[+] SFC completed." -ForegroundColor Green
-    Pause-Console
-}
-
-function Run-DISMRestoreHealth {
-    Write-Title "DISM RestoreHealth"
-    Write-Host "[*] Running: DISM /Online /Cleanup-Image /RestoreHealth" -ForegroundColor Green
-    Write-Host "    This can take a while." -ForegroundColor Gray
-    DISM /Online /Cleanup-Image /RestoreHealth
-    Write-Host "[+] DISM completed." -ForegroundColor Green
-    Pause-Console
-}
-
-function Run-CHKDSK {
-    Write-Title "CHKDSK (Disk Check)"
-    Write-Host "Choose a drive to check (example: C: or D:)" -ForegroundColor Gray
-    $drive = Read-Host "Drive letter (like C:)"
-
-    if ([string]::IsNullOrWhiteSpace($drive)) { return }
-
-    # Normalize
-    $drive = $drive.Trim().TrimEnd("\")
-    if ($drive.Length -eq 1) { $drive = "${drive}:" }  # FIX: avoid $drive: parsing bug
-
-    # Validate
-    if ($drive -notmatch '^[A-Za-z]:$') {
-        Write-Host "[!] Invalid drive format. Use C: or D:" -ForegroundColor Yellow
-        Pause-Console
-        return
-    }
-
-    Write-Host ""
-    Write-Host "1) Online scan (no reboot): chkdsk $drive /scan" -ForegroundColor Cyan
-    Write-Host "2) Full repair (may require reboot): chkdsk $drive /r /f" -ForegroundColor Cyan
-    $mode = Read-Host "Pick 1 or 2"
-
-    if ($mode -eq "1") {
-        Write-Host "[*] Running: chkdsk $drive /scan" -ForegroundColor Green
-        chkdsk $drive /scan
-        Write-Host "[+] CHKDSK /scan completed." -ForegroundColor Green
-    }
-    elseif ($mode -eq "2") {
-        Write-Host "[*] Running: chkdsk $drive /r /f" -ForegroundColor Green
-        Write-Host "    If it says the drive is in use, type Y to schedule at reboot." -ForegroundColor Gray
-        chkdsk $drive /r /f
-        Write-Host "[+] CHKDSK command finished (may be scheduled)." -ForegroundColor Green
-    }
-    else {
-        Write-Host "[!] Invalid selection." -ForegroundColor Yellow
-    }
-
-    Pause-Console
-}
-
-function Clear-FiveMCacheAndCrashes {
-    Write-Title "Clear FiveM Cache + Crash Logs"
-
-    $fiveM = Get-FiveMBasePath
-    Write-Host "[*] FiveM base path: $fiveM" -ForegroundColor Gray
-    Write-Host ""
-
-    $dataPath        = Join-Path $fiveM "data"
-    $serverCachePriv = Join-Path $dataPath "server-cache-priv"
-    $serverCache     = Join-Path $dataPath "server-cache"
-    $nuiCache        = Join-Path $dataPath "nui-storage"
-    $crashesPath     = Join-Path $fiveM "crashes"
-
-    Write-Host "Deleting cache folders..." -ForegroundColor Cyan
-    Remove-ContentsSafe -Path $serverCachePriv -MissingMessage "Please let support know this folder location does not exist."
-    Remove-ContentsSafe -Path $serverCache     -MissingMessage "Please let support know this folder location does not exist."
-    Remove-ContentsSafe -Path $nuiCache        -MissingMessage "Please let support know this folder location does not exist."
-
-    Write-Host ""
-    Write-Host "Deleting crash logs..." -ForegroundColor Cyan
-    Remove-ContentsSafe -Path $crashesPath -MissingMessage "Please let support know this folder location does not exist."
-
-    Write-Host ""
-    Write-Host "[+] Cleanup complete." -ForegroundColor Green
-    Pause-Console
-}
-
-function Open-FiveMFolder {
-    Write-Title "Open FiveM Folder"
-    $fiveM = Get-FiveMBasePath
-
-    if (Test-Path $fiveM) {
-        Write-Host "[*] Opening: $fiveM" -ForegroundColor Green
-        Start-Process explorer.exe $fiveM
-    } else {
-        Write-Host "[!] Not Found: $fiveM" -ForegroundColor Yellow
-        Write-Host "    Please let support know this folder location does not exist." -ForegroundColor Yellow
-    }
-
-    Pause-Console
-}
-
-function Show-Checklist {
-    Write-Title "Quick Checklist"
-    Write-Host "- Clear Cache / Clear Crash Logs (Option 4)" -ForegroundColor Gray
-    Write-Host "- Check if FiveM is most current version" -ForegroundColor Gray
-    Write-Host "- Check GTA 5 is up to date and verify game files" -ForegroundColor Gray
-    Write-Host "- Check Hard Drive and Storage Space (C: should be in the Blue)" -ForegroundColor Gray
-    Write-Host "- FiveM / GTA operate best on main drive" -ForegroundColor Gray
-    Write-Host "- Windows Update + GPU Driver Update" -ForegroundColor Gray
-    Write-Host "- Try switching CFX (Beta/Release/Latest) + enable NUI in-process GPU if available" -ForegroundColor Gray
-    Pause-Console
-}
-
-function Export-PCSpecsToDesktop {
-    Write-Title "Export PC Specs Report"
-    $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-    $outPath = Join-Path $env:USERPROFILE "Desktop\FiveM-PC-Specs-$stamp.txt"
-    New-PCSpecsReport -OutputPath $outPath
-    Start-Process explorer.exe "/select,`"$outPath`""
-    Pause-Console
-}
-
-function Export-LogsForDiscord {
-    Write-Title "Export Logs ZIP for Discord Ticket (+ PC Specs)"
-
-    $logDir = Get-LogFolder
-    $latest = Get-LatestLogFile
-
-    if (-not $latest) {
-        Write-Host "[!] No log files found in: $logDir" -ForegroundColor Yellow
-        Pause-Console
-        return
-    }
-
-    $fiveM = Get-FiveMBasePath
-    $crashesPath = Join-Path $fiveM "crashes"
-
-    $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-    $zipPath = Join-Path $env:USERPROFILE "Desktop\FiveM-Logs-$stamp.zip"
-
-    # Temp staging folder
-    $tempRoot = Join-Path $env:TEMP "FiveM-Export-$stamp"
-    New-Item -ItemType Directory -Path $tempRoot | Out-Null
-
-    try {
-        Write-Host "[*] Staging latest tool log..." -ForegroundColor Cyan
-        Copy-Item -LiteralPath $latest.FullName -Destination (Join-Path $tempRoot $latest.Name) -Force
-
-        $specPath = Join-Path $tempRoot "PC_Specs.txt"
-        New-PCSpecsReport -OutputPath $specPath
-
-        if (Test-Path $crashesPath) {
-            Write-Host "[*] Staging FiveM crash files (last 7 days)..." -ForegroundColor Cyan
-            $destCrashes = Join-Path $tempRoot "FiveM_Crashes"
-            New-Item -ItemType Directory -Path $destCrashes | Out-Null
-
-            $cutoff = (Get-Date).AddDays(-7)
-            Get-ChildItem -Path $crashesPath -Recurse -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.LastWriteTime -ge $cutoff } |
-                ForEach-Object {
-                    $rel = $_.FullName.Substring($crashesPath.Length).TrimStart("\")
-                    $target = Join-Path $destCrashes $rel
-                    $targetDir = Split-Path $target -Parent
-                    if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null }
-                    Copy-Item -LiteralPath $_.FullName -Destination $target -Force -ErrorAction SilentlyContinue
-                }
-        } else {
-            Write-Host "[!] FiveM crashes folder not found (skipping)." -ForegroundColor Yellow
-        }
-
-        if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
-        Write-Host "[*] Creating ZIP: $zipPath" -ForegroundColor Green
-        Compress-Archive -Path (Join-Path $tempRoot "*") -DestinationPath $zipPath -Force
-
-        Write-Host "[+] Export complete!" -ForegroundColor Green
-        Write-Host "    Upload this ZIP to your Discord ticket." -ForegroundColor Gray
-
-        Start-Process explorer.exe "/select,`"$zipPath`""
-    }
-    catch {
-        Write-Host "[X] Export failed: $($_.Exception.Message)" -ForegroundColor Red
-    }
-    finally {
-        try { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-    }
-
-    Pause-Console
-}
-
-#endregion Actions
-
-#region Menu
-
-function Show-Menu {
-    Write-Title "FiveM Troubleshooting (Menu)"
-
-    if (Test-IsAdmin) {
-        Write-Host "Status: Running as Administrator" -ForegroundColor Green
-    } else {
-        Write-Host "Status: NOT running as Administrator (some fixes may fail)" -ForegroundColor Yellow
-    }
-
-    Write-Host ""
-    Write-Host "1) Run SFC /scannow" -ForegroundColor Cyan
-    Write-Host "2) Run DISM /RestoreHealth" -ForegroundColor Cyan
-    Write-Host "3) Run CHKDSK (scan or /r /f)" -ForegroundColor Cyan
-    Write-Host "4) Clear FiveM Cache + Crash Logs" -ForegroundColor Cyan
-    Write-Host "5) Open FiveM Application Data folder" -ForegroundColor Cyan
-    Write-Host "6) Show Quick Checklist" -ForegroundColor Cyan
-    Write-Host "7) Export logs ZIP for Discord ticket (+ PC specs inside)" -ForegroundColor Cyan
-    Write-Host "8) Export PC specs report (TXT) to Desktop" -ForegroundColor Cyan
-    Write-Host "0) Exit" -ForegroundColor Cyan
-    Write-Host ""
-}
-
-#endregion Menu
-
-#region Main
-
-try {
-    Start-Logging
+    $suffix = if ($DefaultYes) { "[Y/N]" } else { "[N/Y]" }
 
     while ($true) {
-        Show-Menu
-        $choice = Read-Host "Choose an option (0-8)"
+        $inputValue = Read-Host "$Prompt $suffix"
 
-        switch ($choice) {
-            "1" { Run-SFC }
-            "2" { Run-DISMRestoreHealth }
-            "3" { Run-CHKDSK }
-            "4" { Clear-FiveMCacheAndCrashes }
-            "5" { Open-FiveMFolder }
-            "6" { Show-Checklist }
-            "7" { Export-LogsForDiscord }
-            "8" { Export-PCSpecsToDesktop }
-            "0" { break }
-            default {
-                Write-Host "[!] Invalid selection. Choose 0-8." -ForegroundColor Yellow
-                Pause-Console
-            }
+        if ([string]::IsNullOrWhiteSpace($inputValue)) {
+            return $DefaultYes
+        }
+
+        switch ($inputValue.Trim().ToUpper()) {
+            "Y" { return $true }
+            "N" { return $false }
+            default { Write-Host "Please enter Y or N." -ForegroundColor Yellow }
         }
     }
 }
+#endregion Bootstrap
+
+#region Elevation
+function Test-Admin {
+    try {
+        $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+    catch {
+        Write-Log "Failed to determine admin status: $($_.Exception.Message)" "ERROR"
+        return $false
+    }
+}
+
+function Start-Elevated {
+    if (Test-Admin) {
+        Write-Log "Running as Administrator." "SUCCESS"
+        return
+    }
+
+    Write-Log "Not running as Administrator. Relaunching elevated..." "WARN"
+
+    try {
+        Start-Process powershell.exe -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$PSCommandPath`""
+        exit
+    }
+    catch {
+        Write-Log "Elevation failed or was canceled." "ERROR"
+        throw
+    }
+}
+#endregion Elevation
+
+#region Safe Execution
+function Invoke-Safely {
+    param(
+        [Parameter(Mandatory)][string]$ActionName,
+        [Parameter(Mandatory)][scriptblock]$ScriptBlock
+    )
+
+    Write-Log "Starting: $ActionName" "ACTION"
+    try {
+        & $ScriptBlock
+        Write-Log "Completed: $ActionName" "SUCCESS"
+        Add-Result -Step $ActionName -Status "SUCCESS" -Details "Completed successfully"
+        return $true
+    }
+    catch {
+        $msg = $_.Exception.Message
+        Write-Log "Failed: $ActionName - $msg" "ERROR"
+        Add-Result -Step $ActionName -Status "ERROR" -Details $msg
+        return $false
+    }
+}
+#endregion Safe Execution
+
+#region Helpers
+function Format-BytesToGB {
+    param([double]$Bytes)
+    return [math]::Round($Bytes / 1GB, 2)
+}
+
+function Get-ActiveAdapters {
+    try {
+        Get-NetAdapter -ErrorAction Stop | Where-Object { $_.Status -eq "Up" -and $_.HardwareInterface -eq $true }
+    }
+    catch {
+        Write-Log "Failed to enumerate network adapters: $($_.Exception.Message)" "ERROR"
+        @()
+    }
+}
+
+function Remove-ChildItemsSafely {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        Write-Log "Path not found: $Path" "WARN"
+        return
+    }
+
+    Get-ChildItem -Path $Path -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Log "Skipped locked item: $($_.FullName)" "WARN"
+        }
+    }
+}
+
+function Get-CommonGTAPaths {
+    @(
+        "C:\Program Files\Rockstar Games\Grand Theft Auto V\GTA5.exe",
+        "C:\Program Files (x86)\Steam\steamapps\common\Grand Theft Auto V\GTA5.exe",
+        "D:\SteamLibrary\steamapps\common\Grand Theft Auto V\GTA5.exe",
+        "E:\SteamLibrary\steamapps\common\Grand Theft Auto V\GTA5.exe",
+        "F:\SteamLibrary\steamapps\common\Grand Theft Auto V\GTA5.exe"
+    )
+}
+
+function Get-GTAInstallPath {
+    $common = Get-CommonGTAPaths
+    foreach ($path in $common) {
+        if (Test-Path $path) {
+            return $path
+        }
+    }
+
+    try {
+        $uninstallKeys = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+
+        $match = Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -match "Grand Theft Auto V" } |
+            Select-Object -First 1
+
+        if ($match -and $match.InstallLocation) {
+            $candidate = Join-Path $match.InstallLocation "GTA5.exe"
+            if (Test-Path $candidate) {
+                return $candidate
+            }
+        }
+    }
+    catch {
+        Write-Log "GTA detection via registry failed: $($_.Exception.Message)" "WARN"
+    }
+
+    return $null
+}
+#endregion Helpers
+
+#region Detection / Diagnostics
+function Test-FiveMInstalled {
+    $exists = (Test-Path $Script:Paths.FiveMApp) -or (Test-Path $Script:Paths.FiveMApplicationData)
+    if ($exists) {
+        Write-Log "FiveM installation detected." "SUCCESS"
+    }
+    else {
+        Write-Log "FiveM installation not detected in LocalAppData." "WARN"
+    }
+    return $exists
+}
+
+function Get-FiveMExecutablePath {
+    $exe = Join-Path $Script:Paths.FiveMApp "FiveM.exe"
+    if (Test-Path $exe) { return $exe }
+    return $null
+}
+
+function Get-FiveMVersion {
+    $exe = Get-FiveMExecutablePath
+    if ($exe -and (Test-Path $exe)) {
+        try {
+            return (Get-Item $exe).VersionInfo.FileVersion
+        }
+        catch {
+            return $null
+        }
+    }
+    return $null
+}
+
+function Get-FreeDiskSpace {
+    try {
+        $systemDrive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+        [PSCustomObject]@{
+            Drive       = $systemDrive.DeviceID
+            FreeGB      = Format-BytesToGB $systemDrive.FreeSpace
+            TotalGB     = Format-BytesToGB $systemDrive.Size
+            PercentFree = [math]::Round(($systemDrive.FreeSpace / $systemDrive.Size) * 100, 2)
+        }
+    }
+    catch {
+        Write-Log "Unable to get disk information: $($_.Exception.Message)" "ERROR"
+        $null
+    }
+}
+
+function Test-StorageHealth {
+    $disk = Get-FreeDiskSpace
+    if (-not $disk) { return }
+
+    Write-Log "System drive $($disk.Drive): $($disk.FreeGB) GB free / $($disk.TotalGB) GB total ($($disk.PercentFree)% free)" "INFO"
+
+    if ($disk.FreeGB -lt 15) {
+        Write-Log "Low disk space detected." "WARN"
+        Add-Result -Step "Disk Space Check" -Status "WARN" -Details "Low free space on system drive"
+    }
+    else {
+        Write-Log "Disk space looks healthy." "SUCCESS"
+        Add-Result -Step "Disk Space Check" -Status "SUCCESS" -Details "Healthy free space"
+    }
+}
+
+function Test-InternetConnectivity {
+    $targets = @("1.1.1.1", "8.8.8.8", "google.com")
+    $results = @()
+
+    foreach ($target in $targets) {
+        $ok = $false
+        try {
+            $ok = Test-Connection -ComputerName $target -Count 1 -Quiet -ErrorAction Stop
+        }
+        catch {
+            $ok = $false
+        }
+
+        $results += [PSCustomObject]@{
+            Target    = $target
+            Reachable = $ok
+        }
+
+        if ($ok) {
+            Write-Log "Connectivity OK: $target" "SUCCESS"
+        }
+        else {
+            Write-Log "Connectivity failed: $target" "WARN"
+        }
+    }
+
+    return $results
+}
+
+function Get-WindowsUpdateStatus {
+    try {
+        $auKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\Results\Install"
+        if (Test-Path $auKey) {
+            $props = Get-ItemProperty -Path $auKey -ErrorAction Stop
+            return [PSCustomObject]@{
+                LastSuccessTime = $props.LastSuccessTime
+                ResultCode      = $props.ResultCode
+            }
+        }
+    }
+    catch {
+        Write-Log "Could not read Windows Update status: $($_.Exception.Message)" "WARN"
+    }
+    return $null
+}
+
+function Get-GPUInfo {
+    try {
+        Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion
+    }
+    catch {
+        Write-Log "Failed to get GPU info: $($_.Exception.Message)" "WARN"
+        @()
+    }
+}
+
+function Test-FiveMCrashPresence {
+    if (Test-Path $Script:Paths.FiveMCrashes) {
+        try {
+            $count = (Get-ChildItem -Path $Script:Paths.FiveMCrashes -Force -ErrorAction SilentlyContinue | Measure-Object).Count
+            Write-Log "Crash folder item count: $count" "INFO"
+            return $count
+        }
+        catch {
+            Write-Log "Could not inspect crash folder: $($_.Exception.Message)" "WARN"
+        }
+    }
+    return 0
+}
+
+function Get-SystemDiagnostics {
+    Write-Log "Collecting system diagnostics..." "ACTION"
+
+    $os          = Get-CimInstance Win32_OperatingSystem
+    $cpu         = Get-CimInstance Win32_Processor | Select-Object -First 1
+    $cs          = Get-CimInstance Win32_ComputerSystem
+    $disk        = Get-FreeDiskSpace
+    $gpu         = Get-GPUInfo
+    $dns         = Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue
+    $wu          = Get-WindowsUpdateStatus
+    $fivemVer    = Get-FiveMVersion
+    $gtaPath     = Get-GTAInstallPath
+    $fivemExe    = Get-FiveMExecutablePath
+
+    $diag = [PSCustomObject]@{
+        ComputerName     = $env:COMPUTERNAME
+        UserName         = $env:USERNAME
+        OS               = $os.Caption
+        OSVersion        = $os.Version
+        BuildNumber      = $os.BuildNumber
+        LastBoot         = $os.LastBootUpTime
+        CPU              = $cpu.Name
+        RAM_GB           = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
+        GPU              = ($gpu.Name -join "; ")
+        GPUDriverVersion = ($gpu.DriverVersion -join "; ")
+        SystemDriveFree  = if ($disk) { $disk.FreeGB } else { $null }
+        SystemDriveTotal = if ($disk) { $disk.TotalGB } else { $null }
+        FiveMInstalled   = Test-FiveMInstalled
+        FiveMVersion     = $fivemVer
+        FiveMExe         = $fivemExe
+        FiveMPath        = $Script:Paths.FiveMApplicationData
+        GTAPath          = $gtaPath
+        DNS              = ($dns | ForEach-Object { "$($_.InterfaceAlias): $($_.ServerAddresses -join ', ')" }) -join " | "
+        WinUpdateLastOK  = if ($wu) { $wu.LastSuccessTime } else { $null }
+        WinUpdateCode    = if ($wu) { $wu.ResultCode } else { $null }
+        CrashFolderCount = Test-FiveMCrashPresence
+    }
+
+    $diag | Format-List | Out-String | ForEach-Object {
+        if ($_.Trim()) { Write-Log $_.TrimEnd() "INFO" }
+    }
+
+    return $diag
+}
+
+function Show-ActionHistory {
+    Write-Host
+    Write-Host "==================== Action History ====================" -ForegroundColor Cyan
+    foreach ($item in $Script:History) {
+        Write-Host "[$($item.Time)] [$($item.Level)] $($item.Message)"
+    }
+}
+
+function Show-ResultsTable {
+    Write-Host
+    Write-Host "==================== Results Summary ===================" -ForegroundColor Cyan
+    if ($Script:Results.Count -eq 0) {
+        Write-Host "No actions recorded yet." -ForegroundColor Yellow
+        return
+    }
+
+    $Script:Results | Format-Table Time, Step, Status, Details -AutoSize
+}
+#endregion Detection / Diagnostics
+
+#region Process Handling
+function Stop-GameProcesses {
+    $targets = @(
+        "FiveM",
+        "FiveM_b2189_GTAProcess",
+        "FiveM_b2372_GTAProcess",
+        "FiveM_b2545_GTAProcess",
+        "FiveM_b2612_GTAProcess",
+        "FiveM_b2699_GTAProcess",
+        "FiveM_b2802_GTAProcess",
+        "FiveM_b2944_GTAProcess",
+        "FiveM_b3095_GTAProcess",
+        "GTA5",
+        "PlayGTAV",
+        "GTAVLauncher",
+        "RockstarService"
+    )
+
+    $stoppedAny = $false
+
+    foreach ($name in $targets) {
+        $procs = Get-Process -Name $name -ErrorAction SilentlyContinue
+        foreach ($proc in $procs) {
+            try {
+                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                Write-Log "Stopped process: $($proc.ProcessName) (PID $($proc.Id))" "SUCCESS"
+                $stoppedAny = $true
+            }
+            catch {
+                Write-Log "Failed to stop process $($proc.ProcessName): $($_.Exception.Message)" "WARN"
+            }
+        }
+    }
+
+    if (-not $stoppedAny) {
+        Write-Log "No FiveM/GTA-related running processes found." "INFO"
+    }
+}
+#endregion Process Handling
+
+#region Repair Actions
+function Clear-FiveMCache {
+    Write-Log "Clearing FiveM cache folders..." "ACTION"
+    Remove-ChildItemsSafely -Path $Script:Paths.ServerCachePriv
+    Remove-ChildItemsSafely -Path $Script:Paths.ServerCache
+    Write-Log "FiveM cache cleanup complete." "SUCCESS"
+}
+
+function Clear-FiveMCrashLogs {
+    Write-Log "Clearing FiveM crash logs..." "ACTION"
+    Remove-ChildItemsSafely -Path $Script:Paths.FiveMCrashes
+    Write-Log "Crash log cleanup complete." "SUCCESS"
+}
+
+function Clear-TempFiles {
+    Write-Log "Clearing temp files..." "ACTION"
+    Remove-ChildItemsSafely -Path $Script:Paths.Temp
+    Write-Log "Temp cleanup complete." "SUCCESS"
+}
+
+function Reset-NetworkStack {
+    Write-Log "Flushing DNS..." "ACTION"
+    ipconfig /flushdns | Out-Null
+
+    Write-Log "Resetting Winsock..." "ACTION"
+    netsh winsock reset | Out-Null
+
+    Write-Log "Resetting IP stack..." "ACTION"
+    netsh int ip reset | Out-Null
+
+    $Script:RestartNeeded = $true
+    Write-Log "Network reset complete. Restart is recommended." "SUCCESS"
+}
+
+function Set-CloudflareDNS {
+    $adapters = Get-ActiveAdapters
+    if (-not $adapters -or $adapters.Count -eq 0) {
+        throw "No active network adapters found."
+    }
+
+    foreach ($adapter in $adapters) {
+        try {
+            Set-DnsClientServerAddress -InterfaceIndex $adapter.IfIndex -ServerAddresses @("1.1.1.1","1.0.0.1") -ErrorAction Stop
+            Write-Log "Cloudflare DNS applied to adapter: $($adapter.Name)" "SUCCESS"
+        }
+        catch {
+            Write-Log "Failed to set Cloudflare DNS on $($adapter.Name): $($_.Exception.Message)" "ERROR"
+        }
+    }
+}
+
+function Set-GoogleDNS {
+    $adapters = Get-ActiveAdapters
+    if (-not $adapters -or $adapters.Count -eq 0) {
+        throw "No active network adapters found."
+    }
+
+    foreach ($adapter in $adapters) {
+        try {
+            Set-DnsClientServerAddress -InterfaceIndex $adapter.IfIndex -ServerAddresses @("8.8.8.8","8.8.4.4") -ErrorAction Stop
+            Write-Log "Google DNS applied to adapter: $($adapter.Name)" "SUCCESS"
+        }
+        catch {
+            Write-Log "Failed to set Google DNS on $($adapter.Name): $($_.Exception.Message)" "ERROR"
+        }
+    }
+}
+
+function Open-FiveMFolders {
+    $folders = @(
+        $Script:Paths.FiveMApplicationData,
+        $Script:Paths.FiveMCrashes,
+        $Script:Paths.ServerCachePriv
+    )
+
+    foreach ($folder in $folders) {
+        if (Test-Path $folder) {
+            Start-Process explorer.exe $folder
+            Write-Log "Opened: $folder" "SUCCESS"
+        }
+        else {
+            Write-Log "Folder not found: $folder" "WARN"
+        }
+    }
+}
+#endregion Repair Actions
+
+#region Restart
+function Invoke-RestartPrompt {
+    if (-not $Script:RestartNeeded) {
+        return
+    }
+
+    Write-Host
+    Write-Host "A restart is recommended to fully apply network reset changes." -ForegroundColor Yellow
+
+    $restart = Read-YesNo -Prompt "Restart computer now?" -DefaultYes:$false
+    if ($restart) {
+        Write-Log "User chose to restart system." "WARN"
+        Restart-Computer -Force
+    }
+    else {
+        Write-Log "User chose not to restart right now." "INFO"
+    }
+}
+#endregion Restart
+
+#region Self Update
+function Test-ForUpdates {
+    Write-Log "Checking for script updates..." "ACTION"
+    try {
+        $latest = (Invoke-WebRequest -Uri $Script:RepoVersionUrl -UseBasicParsing -ErrorAction Stop).Content.Trim()
+        Write-Log "Current version: $($Script:Version) | Latest version: $latest" "INFO"
+
+        if ($latest -and $latest -ne $Script:Version) {
+            Write-Log "Update available." "WARN"
+            return $latest
+        }
+
+        Write-Log "You are on the latest version." "SUCCESS"
+        return $null
+    }
+    catch {
+        Write-Log "Update check failed: $($_.Exception.Message)" "WARN"
+        return $null
+    }
+}
+
+function Update-ScriptFromGitHub {
+    $latest = Test-ForUpdates
+    if (-not $latest) { return }
+
+    try {
+        $tempScript = Join-Path $Script:TempFolder "FiveM-Troubleshooting_v$latest.ps1"
+        Invoke-WebRequest -Uri $Script:RepoScriptUrl -OutFile $tempScript -UseBasicParsing -ErrorAction Stop
+        Write-Log "Downloaded latest script to: $tempScript" "SUCCESS"
+        Write-Log "You can replace the current local script with this downloaded copy." "INFO"
+    }
+    catch {
+        Write-Log "Failed to download latest script: $($_.Exception.Message)" "ERROR"
+    }
+}
+#endregion Self Update
+
+#region Export
+function New-SupportSummaryText {
+    param(
+        [Parameter(Mandatory)]
+        [string]$OutputPath,
+
+        [Parameter(Mandatory)]
+        [psobject]$Diagnostics
+    )
+
+    $lines = @()
+    $lines += "FiveM Troubleshooter Support Summary"
+    $lines += "Version: $($Script:Version)"
+    $lines += "Session ID: $($Script:SessionId)"
+    $lines += "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    $lines += ""
+    $lines += "System"
+    $lines += "------"
+    $lines += "Computer Name: $($Diagnostics.ComputerName)"
+    $lines += "User Name: $($Diagnostics.UserName)"
+    $lines += "OS: $($Diagnostics.OS)"
+    $lines += "OS Version: $($Diagnostics.OSVersion)"
+    $lines += "CPU: $($Diagnostics.CPU)"
+    $lines += "RAM (GB): $($Diagnostics.RAM_GB)"
+    $lines += "GPU: $($Diagnostics.GPU)"
+    $lines += ""
+    $lines += "Game Detection"
+    $lines += "-------------"
+    $lines += "FiveM Installed: $($Diagnostics.FiveMInstalled)"
+    $lines += "FiveM Version: $($Diagnostics.FiveMVersion)"
+    $lines += "FiveM EXE: $($Diagnostics.FiveMExe)"
+    $lines += "FiveM Path: $($Diagnostics.FiveMPath)"
+    $lines += "GTA Path: $($Diagnostics.GTAPath)"
+    $lines += "Crash Folder Count: $($Diagnostics.CrashFolderCount)"
+    $lines += ""
+    $lines += "Storage / Network"
+    $lines += "-----------------"
+    $lines += "System Drive Free (GB): $($Diagnostics.SystemDriveFree)"
+    $lines += "System Drive Total (GB): $($Diagnostics.SystemDriveTotal)"
+    $lines += "DNS: $($Diagnostics.DNS)"
+    $lines += "Restart Recommended: $($Script:RestartNeeded)"
+    $lines += ""
+    $lines += "Windows Update"
+    $lines += "--------------"
+    $lines += "Last Success Time: $($Diagnostics.WinUpdateLastOK)"
+    $lines += "Result Code: $($Diagnostics.WinUpdateCode)"
+    $lines += ""
+    $lines += "Action Results"
+    $lines += "--------------"
+
+    if ($Script:Results.Count -eq 0) {
+        $lines += "No actions were recorded."
+    }
+    else {
+        foreach ($result in $Script:Results) {
+            $lines += "$($result.Time) | $($result.Step) | $($result.Status) | $($result.Details)"
+        }
+    }
+
+    Set-Content -Path $OutputPath -Value $lines -Encoding UTF8
+}
+
+function Export-DiagnosticsBundle {
+    Write-Log "Creating support package..." "ACTION"
+
+    $bundleRoot = Join-Path $Script:ExportFolder "FiveM_Support_$($Script:SessionId)"
+    New-Item -Path $bundleRoot -ItemType Directory -Force | Out-Null
+
+    $diag = Get-SystemDiagnostics
+    $diag | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $bundleRoot "system_diagnostics.json")
+    $Script:History | Export-Csv -NoTypeInformation -Path (Join-Path $bundleRoot "action_history.csv")
+    $Script:Results | Export-Csv -NoTypeInformation -Path (Join-Path $bundleRoot "results_summary.csv")
+    Copy-Item -Path $Script:LogFile -Destination (Join-Path $bundleRoot "session.log") -Force
+
+    New-SupportSummaryText -OutputPath (Join-Path $bundleRoot "support-summary.txt") -Diagnostics $diag
+
+    try {
+        ipconfig /all > (Join-Path $bundleRoot "ipconfig.txt")
+        systeminfo > (Join-Path $bundleRoot "systeminfo.txt")
+        Get-Process | Sort-Object ProcessName | Select-Object ProcessName, Id, CPU | Out-File (Join-Path $bundleRoot "processes.txt")
+    }
+    catch {
+        Write-Log "One or more extra exports failed: $($_.Exception.Message)" "WARN"
+    }
+
+    Write-Log "Support package created: $bundleRoot" "SUCCESS"
+    Start-Process explorer.exe $bundleRoot
+}
+#endregion Export
+
+#region Workflows
+function Invoke-QuickFix {
+    Show-Banner
+    Write-Host "Quick Fix in progress..." -ForegroundColor Green
+    Write-Host
+
+    $steps = @(
+        @{ Name = "Check Disk Space";        Action = { Test-StorageHealth } },
+        @{ Name = "Check FiveM Presence";    Action = { Test-FiveMInstalled | Out-Null } },
+        @{ Name = "Stop FiveM/GTA Processes";Action = { Stop-GameProcesses } },
+        @{ Name = "Clear FiveM Cache";       Action = { Clear-FiveMCache } },
+        @{ Name = "Clear Crash Logs";        Action = { Clear-FiveMCrashLogs } },
+        @{ Name = "Reset Network";           Action = { Reset-NetworkStack } },
+        @{ Name = "Set Cloudflare DNS";      Action = { Set-CloudflareDNS } },
+        @{ Name = "Test Connectivity";       Action = { Test-InternetConnectivity | Out-Null } },
+        @{ Name = "Create Support Package";  Action = { Export-DiagnosticsBundle } }
+    )
+
+    $total = $steps.Count
+    $current = 0
+
+    foreach ($step in $steps) {
+        $current++
+        Show-ProgressStep -Current $current -Total $total -Activity "FiveM Quick Fix" -Status $step.Name
+        Invoke-Safely -ActionName $step.Name -ScriptBlock $step.Action | Out-Null
+    }
+
+    Write-Progress -Activity "FiveM Quick Fix" -Completed
+    Write-Host
+    Write-Host "Quick Fix completed." -ForegroundColor Green
+    Show-ResultsTable
+    Invoke-RestartPrompt
+    Pause-Console
+}
+
+function Invoke-DiagnosticsOnly {
+    Show-Banner
+    Write-Host "Diagnostics Only..." -ForegroundColor Green
+    Write-Host
+
+    Invoke-Safely -ActionName "Collect System Diagnostics" -ScriptBlock { Get-SystemDiagnostics | Out-Null } | Out-Null
+    Invoke-Safely -ActionName "Check Storage Health" -ScriptBlock { Test-StorageHealth } | Out-Null
+    Invoke-Safely -ActionName "Test Connectivity" -ScriptBlock { Test-InternetConnectivity | Out-Null } | Out-Null
+    Invoke-Safely -ActionName "Check Crash Folder" -ScriptBlock { Test-FiveMCrashPresence | Out-Null } | Out-Null
+
+    Show-ResultsTable
+    Pause-Console
+}
+
+function Invoke-SafeModeScan {
+    Show-Banner
+    Write-Host "Safe Mode / Read-Only Scan..." -ForegroundColor Green
+    Write-Host
+
+    Write-Log "Running read-only checks. No changes will be made." "INFO"
+    Get-SystemDiagnostics | Out-Null
+    Test-StorageHealth
+    Test-InternetConnectivity | Out-Null
+    Test-FiveMCrashPresence | Out-Null
+
+    Pause-Console
+}
+#endregion Workflows
+
+#region Menus
+function Show-AdvancedMenu {
+    do {
+        Show-Banner
+        Write-Host "Advanced Tools" -ForegroundColor Cyan
+        Write-Host "1. Stop FiveM / GTA Processes"
+        Write-Host "2. Reset Network Stack"
+        Write-Host "3. Set DNS to Cloudflare"
+        Write-Host "4. Set DNS to Google"
+        Write-Host "5. Clear Temp Files"
+        Write-Host "6. Open FiveM Folders"
+        Write-Host "7. Show Action History"
+        Write-Host "8. Show Results Summary"
+        Write-Host "9. Check for Script Updates"
+        Write-Host "10. Download Latest Script"
+        Write-Host "0. Back"
+        Write-Host
+
+        $choice = Read-Host "Select an option"
+
+        switch ($choice) {
+            "1"  { Invoke-Safely -ActionName "Stop FiveM / GTA Processes" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
+            "2"  { Invoke-Safely -ActionName "Reset Network Stack" -ScriptBlock { Reset-NetworkStack } | Out-Null; Invoke-RestartPrompt; Pause-Console }
+            "3"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Pause-Console }
+            "4"  { Invoke-Safely -ActionName "Set DNS to Google" -ScriptBlock { Set-GoogleDNS } | Out-Null; Pause-Console }
+            "5"  { Invoke-Safely -ActionName "Clear Temp Files" -ScriptBlock { Clear-TempFiles } | Out-Null; Pause-Console }
+            "6"  { Invoke-Safely -ActionName "Open FiveM Folders" -ScriptBlock { Open-FiveMFolders } | Out-Null; Pause-Console }
+            "7"  { Show-ActionHistory; Pause-Console }
+            "8"  { Show-ResultsTable; Pause-Console }
+            "9"  { Test-ForUpdates | Out-Null; Pause-Console }
+            "10" { Update-ScriptFromGitHub; Pause-Console }
+            "0"  { return }
+            default { Write-Log "Invalid selection." "WARN"; Start-Sleep -Seconds 1 }
+        }
+    } while ($true)
+}
+
+function Show-MainMenu {
+    do {
+        Show-Banner
+        Write-Host "1. Quick Fix"
+        Write-Host "2. Stop FiveM / GTA Processes"
+        Write-Host "3. Clear FiveM Cache"
+        Write-Host "4. Clear Crash Logs"
+        Write-Host "5. Reset Network"
+        Write-Host "6. Set DNS to Cloudflare"
+        Write-Host "7. Run Diagnostics"
+        Write-Host "8. Export Support Package"
+        Write-Host "9. Safe Mode / Read-Only Scan"
+        Write-Host "10. Advanced Tools"
+        Write-Host "0. Exit"
+        Write-Host
+
+        $choice = Read-Host "Select an option"
+
+        switch ($choice) {
+            "1"  { Invoke-QuickFix }
+            "2"  { Invoke-Safely -ActionName "Stop FiveM / GTA Processes" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
+            "3"  { Invoke-Safely -ActionName "Clear FiveM Cache" -ScriptBlock { Clear-FiveMCache } | Out-Null; Pause-Console }
+            "4"  { Invoke-Safely -ActionName "Clear Crash Logs" -ScriptBlock { Clear-FiveMCrashLogs } | Out-Null; Pause-Console }
+            "5"  { Invoke-Safely -ActionName "Reset Network" -ScriptBlock { Reset-NetworkStack } | Out-Null; Invoke-RestartPrompt; Pause-Console }
+            "6"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Pause-Console }
+            "7"  { Invoke-DiagnosticsOnly }
+            "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
+            "9"  { Invoke-SafeModeScan }
+            "10" { Show-AdvancedMenu }
+            "0"  {
+                Write-Log "Exiting tool." "INFO"
+                break
+            }
+            default {
+                Write-Log "Invalid selection." "WARN"
+                Start-Sleep -Seconds 1
+            }
+        }
+    } while ($true)
+}
+#endregion Menus
+
+#region Main
+try {
+    Initialize-Environment
+    Write-Log "Starting $($Script:ToolName) v$($Script:Version)" "INFO"
+    Start-Elevated
+    Show-MainMenu
+}
 catch {
-    Write-Host ""
-    Write-Host "[X] Script crashed with an error:" -ForegroundColor Red
-    Write-Host "    $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "More details:" -ForegroundColor Yellow
-    Write-Host ($_ | Out-String)
+    Write-Log "Fatal error: $($_.Exception.Message)" "ERROR"
     Pause-Console
 }
 finally {
-    try { Stop-Transcript } catch {}
-    Wait-BeforeExit
+    Write-Log "Session ended." "INFO"
 }
-
 #endregion Main
