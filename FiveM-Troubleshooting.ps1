@@ -508,45 +508,31 @@ function Clear-FiveMCrashLogs {
     }
 }
 
-function Clear-TempFiles {
-    Write-Log "Clearing FiveM-related temp files..." "ACTION"
+function Clear-FiveMLocalFiles {
+    Write-Log "Clearing additional FiveM local files..." "ACTION"
 
-    if (-not (Test-Path $Script:Paths.Temp)) {
-        Write-Log "Temp folder not found: $($Script:Paths.Temp)" "WARN"
-        return
-    }
-
-    $patterns = @(
-        "*FiveM*",
-        "*CitizenFX*",
-        "*Cfx*",
-        "*GTA*",
-        "*Rockstar*",
-        "*FiveM-Troubleshooter*"
+    $targets = @(
+        $Script:Paths.NuiStorage
     )
 
-    $foundAny = $false
+    $clearedAny = $false
 
-    foreach ($pattern in $patterns) {
-        Get-ChildItem -Path $Script:Paths.Temp -Force -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like $pattern } |
-            ForEach-Object {
-                try {
-                    Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop
-                    Write-Log "Removed temp item: $($_.FullName)" "SUCCESS"
-                    $foundAny = $true
-                }
-                catch {
-                    Write-Log "Skipped locked temp item: $($_.FullName)" "WARN"
-                }
-            }
+    foreach ($target in $targets) {
+        if (Test-Path $target) {
+            Remove-ChildItemsSafely -Path $target
+            Write-Log "Cleared FiveM local folder: $target" "SUCCESS"
+            $clearedAny = $true
+        }
+        else {
+            Write-Log "FiveM local folder not found: $target" "WARN"
+        }
     }
 
-    if (-not $foundAny) {
-        Write-Log "No FiveM-related temp items found." "INFO"
+    if (-not $clearedAny) {
+        Write-Log "No additional FiveM local files were found to clear." "INFO"
     }
     else {
-        Write-Log "FiveM-related temp cleanup complete." "SUCCESS"
+        Write-Log "Additional FiveM local file cleanup complete." "SUCCESS"
     }
 }
 
@@ -782,7 +768,7 @@ function Show-MainMenu {
         Write-Host "3. Clear Crash Logs"
         Write-Host "4. Reset Internet Settings"
         Write-Host "5. Set DNS to Cloudflare"
-        Write-Host "6. Clear Temp Files"
+        Write-Host "6. Clear FiveM Local Files"
         Write-Host "7. Open FiveM Files"
         Write-Host
 
@@ -807,7 +793,7 @@ function Show-MainMenu {
             "3"  { Invoke-Safely -ActionName "Clear Crash Logs" -ScriptBlock { Clear-FiveMCrashLogs } | Out-Null; Pause-Console }
             "4"  { Invoke-Safely -ActionName "Reset Internet Settings" -ScriptBlock { Reset-NetworkStack } | Out-Null; Invoke-RestartPrompt; Pause-Console }
             "5"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Pause-Console }
-            "6"  { Invoke-Safely -ActionName "Clear Temp Files" -ScriptBlock { Clear-TempFiles } | Out-Null; Pause-Console }
+            "6"  { Invoke-Safely -ActionName "Clear FiveM Local Files" -ScriptBlock { Clear-FiveMLocalFiles } | Out-Null; Pause-Console }
             "7"  { Invoke-Safely -ActionName "Open FiveM Files" -ScriptBlock { Open-FiveMFiles } | Out-Null; Pause-Console }
             "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
             "9"  { Show-ActionHistory; Pause-Console }
