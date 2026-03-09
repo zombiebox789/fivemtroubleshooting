@@ -1,11 +1,11 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.2
+    FiveM Troubleshooter v2.4
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
-    Built as a PowerShell backend that can later be wrapped into a GUI.
+    Designed to keep a lighter system footprint.
 
 .NOTES
     Recommended to run as Administrator.
@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.3.0"
+$Script:Version        = "2.4.0"
 $Script:CompanyName    = "Insomnia Studios"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -21,10 +21,10 @@ $Script:StartTime      = Get-Date
 $Script:RepoVersionUrl = "https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/version.txt"
 $Script:RepoScriptUrl  = "https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/FiveM-Troubleshooting.ps1"
 
-$Script:BaseFolder     = Join-Path $env:ProgramData "FiveM-Troubleshooter"
-$Script:LogFolder      = Join-Path $Script:BaseFolder "Logs"
-$Script:ExportFolder   = Join-Path $Script:BaseFolder "Exports"
-$Script:TempFolder     = Join-Path $Script:BaseFolder "Temp"
+$Script:BaseFolder     = Join-Path $env:TEMP "FiveM-Troubleshooter"
+$Script:LogFolder      = $Script:BaseFolder
+$Script:TempFolder     = $Script:BaseFolder
+$Script:ExportFolder   = [Environment]::GetFolderPath("Desktop")
 $Script:LogFile        = Join-Path $Script:LogFolder "FiveM-Troubleshooter_$($Script:SessionId).log"
 
 $Script:History        = New-Object System.Collections.Generic.List[object]
@@ -47,10 +47,8 @@ $Script:Paths = @{
 
 #region Bootstrap
 function Initialize-Environment {
-    foreach ($folder in @($Script:BaseFolder, $Script:LogFolder, $Script:ExportFolder, $Script:TempFolder)) {
-        if (-not (Test-Path $folder)) {
-            New-Item -Path $folder -ItemType Directory -Force | Out-Null
-        }
+    if (-not (Test-Path $Script:BaseFolder)) {
+        New-Item -Path $Script:BaseFolder -ItemType Directory -Force | Out-Null
     }
 }
 
@@ -72,6 +70,11 @@ function Write-Log {
         "ERROR"   { Write-Host $entry -ForegroundColor Red }
         "SUCCESS" { Write-Host $entry -ForegroundColor Green }
         "ACTION"  { Write-Host $entry -ForegroundColor Magenta }
+    }
+
+    $logDir = Split-Path -Path $Script:LogFile -Parent
+    if (-not (Test-Path $logDir)) {
+        New-Item -Path $logDir -ItemType Directory -Force | Out-Null
     }
 
     Add-Content -Path $Script:LogFile -Value $entry
@@ -317,22 +320,6 @@ function Get-FreeDiskSpace {
     }
 }
 
-function Test-StorageHealth {
-    $disk = Get-FreeDiskSpace
-    if (-not $disk) { return }
-
-    Write-Log "System drive $($disk.Drive): $($disk.FreeGB) GB free / $($disk.TotalGB) GB total ($($disk.PercentFree)% free)" "INFO"
-
-    if ($disk.FreeGB -lt 15) {
-        Write-Log "Low disk space detected." "WARN"
-        Add-Result -Step "Disk Space Check" -Status "WARN" -Details "Low free space on system drive"
-    }
-    else {
-        Write-Log "Disk space looks healthy." "SUCCESS"
-        Add-Result -Step "Disk Space Check" -Status "SUCCESS" -Details "Healthy free space"
-    }
-}
-
 function Test-InternetConnectivity {
     $targets = @("1.1.1.1", "8.8.8.8", "google.com")
     $results = @()
@@ -350,15 +337,10 @@ function Test-InternetConnectivity {
             Target    = $target
             Reachable = $ok
         }
-
-        if ($ok) {
-            Write-Log "Connectivity OK: $target" "SUCCESS"
-        }
-        else {
-            Write-Log "Connectivity failed: $target" "WARN"
-        }
     }
 
+    $passed = ($results | Where-Object { $_.Reachable }).Count
+    Write-Log "Connectivity test complete. Passed $passed of $($results.Count) targets." "INFO"
     return $results
 }
 
@@ -416,6 +398,8 @@ function Get-SystemDiagnostics {
     $fivemVer    = Get-FiveMVersion
     $gtaPath     = Get-GTAInstallPath
     $fivemExe    = Get-FiveMExecutablePath
+    $crashCount  = Test-FiveMCrashPresence
+    $fivemFound  = Test-FiveMInstalled
 
     $diag = [PSCustomObject]@{
         ComputerName     = $env:COMPUTERNAME
@@ -430,7 +414,7 @@ function Get-SystemDiagnostics {
         GPUDriverVersion = ($gpu.DriverVersion -join "; ")
         SystemDriveFree  = if ($disk) { $disk.FreeGB } else { $null }
         SystemDriveTotal = if ($disk) { $disk.TotalGB } else { $null }
-        FiveMInstalled   = Test-FiveMInstalled
+        FiveMInstalled   = $fivemFound
         FiveMVersion     = $fivemVer
         FiveMExe         = $fivemExe
         FiveMPath        = $Script:Paths.FiveMApplicationData
@@ -438,28 +422,16 @@ function Get-SystemDiagnostics {
         DNS              = ($dns | ForEach-Object { "$($_.InterfaceAlias): $($_.ServerAddresses -join ', ')" }) -join " | "
         WinUpdateLastOK  = if ($wu) { $wu.LastSuccessTime } else { $null }
         WinUpdateCode    = if ($wu) { $wu.ResultCode } else { $null }
-        CrashFolderCount = Test-FiveMCrashPresence
+        CrashFolderCount = $crashCount
     }
 
-    $diag | Format-List | Out-String | ForEach-Object {
-        if ($_.Trim()) { Write-Log $_.TrimEnd() "INFO" }
+    Write-Log "Diagnostics collected. FiveM installed: $fivemFound | GTA found: $([bool]$gtaPath) | Crash items: $crashCount" "INFO"
+
+    if ($disk) {
+        Write-Log "Disk free space: $($disk.FreeGB) GB on $($disk.Drive)" "INFO"
     }
 
     return $diag
-}
-
-function Invoke-SafeModeScan {
-    Show-Banner
-    Write-Host "Safe Mode / Read-Only Scan..." -ForegroundColor Green
-    Write-Host
-
-    Write-Log "Running read-only checks. No changes will be made." "INFO"
-    Get-SystemDiagnostics | Out-Null
-    Test-StorageHealth
-    Test-InternetConnectivity | Out-Null
-    Test-FiveMCrashPresence | Out-Null
-
-    Pause-Console
 }
 
 function Show-ActionHistory {
@@ -469,23 +441,15 @@ function Show-ActionHistory {
         Write-Host "[$($item.Time)] [$($item.Level)] $($item.Message)"
     }
 }
+#endregion Detection / Diagnostics
 
 #region Process Handling
 function Stop-GameProcesses {
     $targets = @(
         "FiveM",
-        "FiveM_b2189_GTAProcess",
-        "FiveM_b2372_GTAProcess",
-        "FiveM_b2545_GTAProcess",
-        "FiveM_b2612_GTAProcess",
-        "FiveM_b2699_GTAProcess",
-        "FiveM_b2802_GTAProcess",
-        "FiveM_b2944_GTAProcess",
-        "FiveM_b3095_GTAProcess",
         "GTA5",
         "PlayGTAV",
-        "GTAVLauncher",
-        "RockstarService"
+        "GTAVLauncher"
     )
 
     $stoppedAny = $false
@@ -545,14 +509,44 @@ function Clear-FiveMCrashLogs {
 }
 
 function Clear-TempFiles {
-    Write-Log "Clearing temp files..." "ACTION"
+    Write-Log "Clearing FiveM-related temp files..." "ACTION"
 
-    if (Test-Path $Script:Paths.Temp) {
-        Remove-ChildItemsSafely -Path $Script:Paths.Temp
-        Write-Log "Temp cleanup complete." "SUCCESS"
+    if (-not (Test-Path $Script:Paths.Temp)) {
+        Write-Log "Temp folder not found: $($Script:Paths.Temp)" "WARN"
+        return
+    }
+
+    $patterns = @(
+        "*FiveM*",
+        "*CitizenFX*",
+        "*Cfx*",
+        "*GTA*",
+        "*Rockstar*",
+        "*FiveM-Troubleshooter*"
+    )
+
+    $foundAny = $false
+
+    foreach ($pattern in $patterns) {
+        Get-ChildItem -Path $Script:Paths.Temp -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like $pattern } |
+            ForEach-Object {
+                try {
+                    Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop
+                    Write-Log "Removed temp item: $($_.FullName)" "SUCCESS"
+                    $foundAny = $true
+                }
+                catch {
+                    Write-Log "Skipped locked temp item: $($_.FullName)" "WARN"
+                }
+            }
+    }
+
+    if (-not $foundAny) {
+        Write-Log "No FiveM-related temp items found." "INFO"
     }
     else {
-        Write-Log "Temp folder not found: $($Script:Paths.Temp)" "WARN"
+        Write-Log "FiveM-related temp cleanup complete." "SUCCESS"
     }
 }
 
@@ -652,6 +646,10 @@ function Update-ScriptFromGitHub {
     if (-not $latest) { return }
 
     try {
+        if (-not (Test-Path $Script:TempFolder)) {
+            New-Item -Path $Script:TempFolder -ItemType Directory -Force | Out-Null
+        }
+
         $tempScript = Join-Path $Script:TempFolder "FiveM-Troubleshooting_v$latest.ps1"
         Invoke-WebRequest -Uri $Script:RepoScriptUrl -OutFile $tempScript -UseBasicParsing -ErrorAction Stop
         Write-Log "Downloaded latest script to: $tempScript" "SUCCESS"
@@ -728,8 +726,8 @@ function New-SupportSummaryText {
 function Export-DiagnosticsBundle {
     Write-Log "Creating support package..." "ACTION"
 
-    $bundleRoot = Join-Path $Script:ExportFolder "FiveM_Support_$($Script:SessionId)"
-    $zipPath    = "$bundleRoot.zip"
+    $bundleRoot = Join-Path $Script:TempFolder "FiveM_Support_$($Script:SessionId)"
+    $zipPath    = Join-Path $Script:ExportFolder "FiveM_Support_$($Script:SessionId).zip"
 
     if (Test-Path $bundleRoot) {
         Remove-Item -Path $bundleRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -745,7 +743,7 @@ function Export-DiagnosticsBundle {
     $diag | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $bundleRoot "system_diagnostics.json")
     $Script:History | Export-Csv -NoTypeInformation -Path (Join-Path $bundleRoot "action_history.csv")
     $Script:Results | Export-Csv -NoTypeInformation -Path (Join-Path $bundleRoot "results_summary.csv")
-    Copy-Item -Path $Script:LogFile -Destination (Join-Path $bundleRoot "session.log") -Force
+    Copy-Item -Path $Script:LogFile -Destination (Join-Path $bundleRoot "session.log") -Force -ErrorAction SilentlyContinue
 
     New-SupportSummaryText -OutputPath (Join-Path $bundleRoot "support-summary.txt") -Diagnostics $diag
 
@@ -762,11 +760,13 @@ function Export-DiagnosticsBundle {
     try {
         Compress-Archive -Path (Join-Path $bundleRoot '*') -DestinationPath $zipPath -Force
         Write-Log "Support package ZIP created: $zipPath" "SUCCESS"
-        Start-Process explorer.exe "/select,`"$zipPath`""
     }
     catch {
         Write-Log "Failed to create ZIP package: $($_.Exception.Message)" "ERROR"
         throw
+    }
+    finally {
+        Remove-Item -Path $bundleRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 #endregion Export
