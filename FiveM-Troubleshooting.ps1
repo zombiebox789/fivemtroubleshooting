@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.2.0"
+$Script:Version        = "2.3.0"
 $Script:CompanyName    = "Insomnia Studios"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -448,20 +448,6 @@ function Get-SystemDiagnostics {
     return $diag
 }
 
-function Invoke-DiagnosticsOnly {
-    Show-Banner
-    Write-Host "Diagnostics Only..." -ForegroundColor Green
-    Write-Host
-
-    Invoke-Safely -ActionName "Collect System Diagnostics" -ScriptBlock { Get-SystemDiagnostics | Out-Null } | Out-Null
-    Invoke-Safely -ActionName "Check Storage Health" -ScriptBlock { Test-StorageHealth } | Out-Null
-    Invoke-Safely -ActionName "Test Connectivity" -ScriptBlock { Test-InternetConnectivity | Out-Null } | Out-Null
-    Invoke-Safely -ActionName "Check Crash Folder" -ScriptBlock { Test-FiveMCrashPresence | Out-Null } | Out-Null
-
-    Show-ResultsTable
-    Pause-Console
-}
-
 function Invoke-SafeModeScan {
     Show-Banner
     Write-Host "Safe Mode / Read-Only Scan..." -ForegroundColor Green
@@ -483,18 +469,6 @@ function Show-ActionHistory {
         Write-Host "[$($item.Time)] [$($item.Level)] $($item.Message)"
     }
 }
-
-function Show-ResultsTable {
-    Write-Host
-    Write-Host "==================== Results Summary ===================" -ForegroundColor Cyan
-    if ($Script:Results.Count -eq 0) {
-        Write-Host "No actions recorded yet." -ForegroundColor Yellow
-        return
-    }
-
-    $Script:Results | Format-Table Time, Step, Status, Details -AutoSize
-}
-#endregion Detection / Diagnostics
 
 #region Process Handling
 function Stop-GameProcesses {
@@ -755,6 +729,16 @@ function Export-DiagnosticsBundle {
     Write-Log "Creating support package..." "ACTION"
 
     $bundleRoot = Join-Path $Script:ExportFolder "FiveM_Support_$($Script:SessionId)"
+    $zipPath    = "$bundleRoot.zip"
+
+    if (Test-Path $bundleRoot) {
+        Remove-Item -Path $bundleRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    if (Test-Path $zipPath) {
+        Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+    }
+
     New-Item -Path $bundleRoot -ItemType Directory -Force | Out-Null
 
     $diag = Get-SystemDiagnostics
@@ -768,14 +752,22 @@ function Export-DiagnosticsBundle {
     try {
         ipconfig /all > (Join-Path $bundleRoot "ipconfig.txt")
         systeminfo > (Join-Path $bundleRoot "systeminfo.txt")
-        Get-Process | Sort-Object ProcessName | Select-Object ProcessName, Id, CPU | Out-File (Join-Path $bundleRoot "processes.txt")
+        Get-Process | Sort-Object ProcessName | Select-Object ProcessName, Id, CPU |
+            Out-File (Join-Path $bundleRoot "processes.txt")
     }
     catch {
         Write-Log "One or more extra exports failed: $($_.Exception.Message)" "WARN"
     }
 
-    Write-Log "Support package created: $bundleRoot" "SUCCESS"
-    Start-Process explorer.exe $bundleRoot
+    try {
+        Compress-Archive -Path (Join-Path $bundleRoot '*') -DestinationPath $zipPath -Force
+        Write-Log "Support package ZIP created: $zipPath" "SUCCESS"
+        Start-Process explorer.exe "/select,`"$zipPath`""
+    }
+    catch {
+        Write-Log "Failed to create ZIP package: $($_.Exception.Message)" "ERROR"
+        throw
+    }
 }
 #endregion Export
 
@@ -795,15 +787,13 @@ function Show-MainMenu {
         Write-Host
 
         Write-Host "--- Information / Support ---" -ForegroundColor Cyan
-        Write-Host "8. Run Diagnostics"
-        Write-Host "9. Export Support Package"
-        Write-Host "10. View Results Summary"
-        Write-Host "11. View Action History"
+        Write-Host "8. Export Support Package"
+        Write-Host "9. View Action History"
         Write-Host
 
         Write-Host "--- Updates ---" -ForegroundColor Cyan
-        Write-Host "12. Check for Updates"
-        Write-Host "13. Download Latest Version"
+        Write-Host "10. Check for Updates"
+        Write-Host "11. Download Latest Version"
         Write-Host
 
         Write-Host "0. Exit"
@@ -819,12 +809,10 @@ function Show-MainMenu {
             "5"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Pause-Console }
             "6"  { Invoke-Safely -ActionName "Clear Temp Files" -ScriptBlock { Clear-TempFiles } | Out-Null; Pause-Console }
             "7"  { Invoke-Safely -ActionName "Open FiveM Files" -ScriptBlock { Open-FiveMFiles } | Out-Null; Pause-Console }
-            "8"  { Invoke-DiagnosticsOnly }
-            "9"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
-            "10" { Show-ResultsTable; Pause-Console }
-            "11" { Show-ActionHistory; Pause-Console }
-            "12" { Test-ForUpdates | Out-Null; Pause-Console }
-            "13" { Update-ScriptFromGitHub; Pause-Console }
+            "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
+            "9"  { Show-ActionHistory; Pause-Console }
+            "10" { Test-ForUpdates | Out-Null; Pause-Console }
+            "11" { Update-ScriptFromGitHub; Pause-Console }
             "0"  {
                 Write-Log "Exiting tool." "INFO"
                 break
