@@ -306,7 +306,13 @@ function Get-FiveMVersion {
 
 function Get-FreeDiskSpace {
     try {
-        $systemDrive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+        $driveLetter = if ($env:SystemDrive) { $env:SystemDrive } else { "C:" }
+        $systemDrive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$driveLetter'"
+
+        if (-not $systemDrive) {
+            throw "System drive '$driveLetter' was not found."
+        }
+
         [PSCustomObject]@{
             Drive       = $systemDrive.DeviceID
             FreeGB      = Format-BytesToGB $systemDrive.FreeSpace
@@ -445,6 +451,7 @@ function Show-ActionHistory {
 
 #region Process Handling
 function Stop-GameProcesses {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     $targets = @(
         "FiveM",
         "GTA5",
@@ -458,9 +465,12 @@ function Stop-GameProcesses {
         $procs = Get-Process -Name $name -ErrorAction SilentlyContinue
         foreach ($proc in $procs) {
             try {
-                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
-                Write-Log "Stopped process: $($proc.ProcessName) (PID $($proc.Id))" "SUCCESS"
-                $stoppedAny = $true
+                $target = "$($proc.ProcessName) (PID $($proc.Id))"
+                if ($PSCmdlet.ShouldProcess($target, "Stop process")) {
+                    Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                    Write-Log "Stopped process: $target" "SUCCESS"
+                    $stoppedAny = $true
+                }
             }
             catch {
                 Write-Log "Failed to stop process $($proc.ProcessName): $($_.Exception.Message)" "WARN"
@@ -476,6 +486,7 @@ function Stop-GameProcesses {
 
 #region Repair Actions
 function Clear-FiveMCache {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     Write-Log "Clearing FiveM cache folders..." "ACTION"
 
     $cacheTargets = @(
@@ -485,8 +496,10 @@ function Clear-FiveMCache {
 
     foreach ($target in $cacheTargets) {
         if (Test-Path $target) {
-            Remove-ChildItemsSafely -Path $target
-            Write-Log "Cleared cache folder: $target" "SUCCESS"
+            if ($PSCmdlet.ShouldProcess($target, "Clear FiveM cache contents")) {
+                Remove-ChildItemsSafely -Path $target
+                Write-Log "Cleared cache folder: $target" "SUCCESS"
+            }
         }
         else {
             Write-Log "Cache folder not found: $target" "WARN"
@@ -497,11 +510,14 @@ function Clear-FiveMCache {
 }
 
 function Clear-FiveMCrashLogs {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     Write-Log "Clearing FiveM crash logs..." "ACTION"
 
     if (Test-Path $Script:Paths.FiveMCrashes) {
-        Remove-ChildItemsSafely -Path $Script:Paths.FiveMCrashes
-        Write-Log "Crash log cleanup complete." "SUCCESS"
+        if ($PSCmdlet.ShouldProcess($Script:Paths.FiveMCrashes, "Clear FiveM crash log contents")) {
+            Remove-ChildItemsSafely -Path $Script:Paths.FiveMCrashes
+            Write-Log "Crash log cleanup complete." "SUCCESS"
+        }
     }
     else {
         Write-Log "Crash folder not found: $($Script:Paths.FiveMCrashes)" "WARN"
@@ -509,6 +525,7 @@ function Clear-FiveMCrashLogs {
 }
 
 function Clear-FiveMLocalFiles {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     Write-Log "Clearing additional FiveM local files..." "ACTION"
 
     $targets = @(
@@ -519,9 +536,11 @@ function Clear-FiveMLocalFiles {
 
     foreach ($target in $targets) {
         if (Test-Path $target) {
-            Remove-ChildItemsSafely -Path $target
-            Write-Log "Cleared FiveM local folder: $target" "SUCCESS"
-            $clearedAny = $true
+            if ($PSCmdlet.ShouldProcess($target, "Clear FiveM local file contents")) {
+                Remove-ChildItemsSafely -Path $target
+                Write-Log "Cleared FiveM local folder: $target" "SUCCESS"
+                $clearedAny = $true
+            }
         }
         else {
             Write-Log "FiveM local folder not found: $target" "WARN"
@@ -537,20 +556,36 @@ function Clear-FiveMLocalFiles {
 }
 
 function Reset-NetworkStack {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    if (-not $PSCmdlet.ShouldProcess("Network stack", "Flush DNS and reset Winsock/IP stack")) {
+        Write-Log "Network reset cancelled by ShouldProcess." "INFO"
+        return
+    }
+
     Write-Log "Flushing DNS..." "ACTION"
     ipconfig /flushdns | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to flush DNS (ipconfig exit code: $LASTEXITCODE)."
+    }
 
     Write-Log "Resetting Winsock..." "ACTION"
     netsh winsock reset | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to reset Winsock (netsh exit code: $LASTEXITCODE)."
+    }
 
     Write-Log "Resetting IP stack..." "ACTION"
     netsh int ip reset | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to reset IP stack (netsh exit code: $LASTEXITCODE)."
+    }
 
     $Script:RestartNeeded = $true
     Write-Log "Network reset complete. Restart is recommended." "SUCCESS"
 }
 
 function Set-CloudflareDNS {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     $adapters = Get-ActiveAdapters
     if (-not $adapters -or $adapters.Count -eq 0) {
         throw "No active network adapters found."
@@ -558,8 +593,10 @@ function Set-CloudflareDNS {
 
     foreach ($adapter in $adapters) {
         try {
-            Set-DnsClientServerAddress -InterfaceIndex $adapter.IfIndex -ServerAddresses @("1.1.1.1","1.0.0.1") -ErrorAction Stop
-            Write-Log "Cloudflare DNS applied to adapter: $($adapter.Name)" "SUCCESS"
+            if ($PSCmdlet.ShouldProcess($adapter.Name, "Set DNS servers to 1.1.1.1 and 1.0.0.1")) {
+                Set-DnsClientServerAddress -InterfaceIndex $adapter.IfIndex -ServerAddresses @("1.1.1.1","1.0.0.1") -ErrorAction Stop
+                Write-Log "Cloudflare DNS applied to adapter: $($adapter.Name)" "SUCCESS"
+            }
         }
         catch {
             Write-Log "Failed to set Cloudflare DNS on $($adapter.Name): $($_.Exception.Message)" "ERROR"
@@ -607,14 +644,76 @@ function Invoke-RestartPrompt {
 #endregion Restart
 
 #region Self Update
+function Invoke-WebRequestWithRetry {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Uri,
+
+        [string]$OutFile,
+
+        [int]$MaxAttempts = 3,
+
+        [int]$DelaySeconds = 2,
+
+        [int]$TimeoutSec = 15
+    )
+
+    $attempt = 0
+    while ($attempt -lt $MaxAttempts) {
+        $attempt++
+        try {
+            $params = @{
+                Uri             = $Uri
+                UseBasicParsing = $true
+                ErrorAction     = 'Stop'
+                TimeoutSec      = $TimeoutSec
+            }
+
+            if ($OutFile) {
+                $params.OutFile = $OutFile
+            }
+
+            return Invoke-WebRequest @params
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                throw
+            }
+
+            Write-Log "Web request attempt $attempt failed for $Uri: $($_.Exception.Message). Retrying in $DelaySeconds seconds..." "WARN"
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+}
+
 function Test-ForUpdates {
     Write-Log "Checking for script updates..." "ACTION"
     try {
-        $latest = (Invoke-WebRequest -Uri $Script:RepoVersionUrl -UseBasicParsing -ErrorAction Stop).Content.Trim()
+        $latest = (Invoke-WebRequestWithRetry -Uri $Script:RepoVersionUrl).Content.Trim()
         Write-Log "Current version: $($Script:Version) | Latest version: $latest" "INFO"
 
-        if ($latest -and $latest -ne $Script:Version) {
-            Write-Log "Update available." "WARN"
+        $currentVersionObj = $null
+        $latestVersionObj = $null
+        $currentParsed = [version]::TryParse($Script:Version, [ref]$currentVersionObj)
+        $latestParsed = [version]::TryParse($latest, [ref]$latestVersionObj)
+
+        if (-not $latest) {
+            Write-Log "Update check returned an empty version value." "WARN"
+            return $null
+        }
+
+        if ($currentParsed -and $latestParsed) {
+            if ($latestVersionObj -gt $currentVersionObj) {
+                Write-Log "Update available." "WARN"
+                return $latest
+            }
+
+            Write-Log "You are on the latest version." "SUCCESS"
+            return $null
+        }
+
+        if ($latest -ne $Script:Version) {
+            Write-Log "Update available (non-semantic version comparison fallback)." "WARN"
             return $latest
         }
 
@@ -637,7 +736,13 @@ function Update-ScriptFromGitHub {
         }
 
         $tempScript = Join-Path $Script:TempFolder "FiveM-Troubleshooting_v$latest.ps1"
-        Invoke-WebRequest -Uri $Script:RepoScriptUrl -OutFile $tempScript -UseBasicParsing -ErrorAction Stop
+        Invoke-WebRequestWithRetry -Uri $Script:RepoScriptUrl -OutFile $tempScript | Out-Null
+
+        $downloadedContent = Get-Content -Path $tempScript -Raw -ErrorAction Stop
+        if ($downloadedContent -notmatch '(?m)^#Requires\s+-Version\s+5\.1') {
+            throw "Downloaded file did not pass basic integrity validation."
+        }
+
         Write-Log "Downloaded latest script to: $tempScript" "SUCCESS"
         Write-Log "You can replace the current local script with this downloaded copy." "INFO"
     }
