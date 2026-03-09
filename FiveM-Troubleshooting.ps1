@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.5
+    FiveM Troubleshooter v2.5.2
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.5.1"
+$Script:Version        = "2.5.2"
 $Script:CompanyName    = "Insomnia Studios"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -27,6 +27,7 @@ $Script:LogFile        = Join-Path $Script:LogFolder "FiveM-Troubleshooter_$($Sc
 $Script:History        = New-Object System.Collections.Generic.List[object]
 $Script:Results        = New-Object System.Collections.Generic.List[object]
 $Script:RestartNeeded  = $false
+$Script:LastActionResult = $null
 
 $Script:Paths = @{
     FiveMRoot            = Join-Path $env:LocalAppData "FiveM"
@@ -91,21 +92,56 @@ function Add-Result {
         [string]$Details
     )
 
-    $Script:Results.Add([PSCustomObject]@{
+    $result = [PSCustomObject]@{
         Time    = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         Step    = $Step
         Status  = $Status
         Details = $Details
-    })
+    }
+
+    $Script:Results.Add($result)
+    $Script:LastActionResult = $result
+}
+
+function Get-StatusColor {
+    param([string]$Status)
+
+    switch ($Status) {
+        "SUCCESS" { return "Green" }
+        "WARN"    { return "Yellow" }
+        "ERROR"   { return "Red" }
+        default   { return "Cyan" }
+    }
+}
+
+function Write-SectionTitle {
+    param([Parameter(Mandatory)][string]$Title)
+    Write-Host ("[{0}]" -f $Title) -ForegroundColor Cyan
 }
 
 function Show-Banner {
     Clear-Host
-    Write-Host "============================================================" -ForegroundColor DarkCyan
+    $line = "============================================================"
+    $adminState = if (Test-Admin) { "Admin" } else { "Standard" }
+    $fivemInfo = Resolve-FiveMInstallInfo
+    $fivemState = if ($fivemInfo.Installed) { "Found ($($fivemInfo.Source))" } else { "Not Found" }
+    $restartState = if ($Script:RestartNeeded) { "Restart Pending" } else { "No Restart Pending" }
+
+    Write-Host $line -ForegroundColor DarkCyan
     Write-Host " $($Script:ToolName) v$($Script:Version)" -ForegroundColor White
     Write-Host " $($Script:CompanyName)" -ForegroundColor Gray
     Write-Host " Session: $($Script:SessionId)" -ForegroundColor Gray
-    Write-Host "============================================================" -ForegroundColor DarkCyan
+    Write-Host " Status: $adminState | FiveM: $fivemState" -ForegroundColor Gray
+    Write-Host " System: $restartState | Time: $(Get-Date -Format 'HH:mm:ss')" -ForegroundColor Gray
+    Write-Host $line -ForegroundColor DarkCyan
+
+    if ($Script:LastActionResult) {
+        $statusColor = Get-StatusColor -Status $Script:LastActionResult.Status
+        Write-Host " Last Action: $($Script:LastActionResult.Step)" -ForegroundColor White
+        Write-Host " Result: $($Script:LastActionResult.Status) - $($Script:LastActionResult.Details)" -ForegroundColor $statusColor
+        Write-Host $line -ForegroundColor DarkGray
+    }
+
     Write-Host
 }
 
@@ -1072,25 +1108,26 @@ function Show-MainMenu {
     do {
         Show-Banner
 
-        Write-Host "--- Fixes ---" -ForegroundColor Cyan
-        Write-Host "1. Close FiveM / GTA"
-        Write-Host "2. Clear FiveM Cache"
-        Write-Host "3. Clear Crash Logs"
-        Write-Host "4. Reset Internet Settings"
-        Write-Host "5. Set DNS to Cloudflare"
-        Write-Host "6. Clear FiveM Local Files"
-        Write-Host "7. Open FiveM Files"
+        Write-SectionTitle -Title "Fixes"
+        Write-Host " 1) Close FiveM / GTA"
+        Write-Host " 2) Clear FiveM Cache"
+        Write-Host " 3) Clear Crash Logs"
+        Write-Host " 4) Reset Internet Settings"
+        Write-Host " 5) Set DNS to Cloudflare"
+        Write-Host " 6) Clear FiveM Local Files"
+        Write-Host " 7) Open FiveM Files"
         Write-Host
 
-        Write-Host "--- Information / Support ---" -ForegroundColor Cyan
-        Write-Host "8. Export Support Package"
-        Write-Host "9. View Action History"
+        Write-SectionTitle -Title "Information / Support"
+        Write-Host " 8) Export Support Package"
+        Write-Host " 9) View Action History"
         Write-Host
 
-        Write-Host "0. Exit"
+        Write-SectionTitle -Title "Session"
+        Write-Host " 0) Exit"
         Write-Host
 
-        $choice = Read-Host "Select an option"
+        $choice = Read-Host "Select an option [0-9]"
 
         switch ($choice) {
             "1"  { Invoke-Safely -ActionName "Close FiveM / GTA" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
