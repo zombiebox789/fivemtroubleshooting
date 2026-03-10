@@ -1083,6 +1083,12 @@ function Open-FiveMFiles {
         }
     }
 }
+
+function Connect-WeThePeopleRP {
+    Write-Log "Launching FiveM connection: We The People RP" "ACTION"
+    Start-Process "fivem://connect/151.244.225.160:30120"
+    Write-Log "Connection request sent to We The People RP." "SUCCESS"
+}
 #endregion Repair Actions
 
 #region Restart
@@ -1229,20 +1235,21 @@ function Show-MainMenu {
         Write-Host " 3) Clear Crash Logs"
         Write-Host " 4) Reset Internet Settings"
         Write-Host " 5) Set DNS to Cloudflare"
-        Write-Host " 6) Clear FiveM Local Files Secondary"
+        Write-Host " 6) Clear FiveM Local Files"
         Write-Host " 7) Open FiveM Files"
         Write-Host
 
         Write-SectionTitle -Title "Information / Support"
         Write-Host " 8) Export Support Package"
         Write-Host " 9) View Action History"
+        Write-Host "10) Connect to ""We The People RP"""
         Write-Host
 
         Write-SectionTitle -Title "Session"
         Write-Host " 0) Exit"
         Write-Host
 
-        $choice = Read-Host "Select an option [0-9]"
+        $choice = Read-Host "Select an option [0-10]"
 
         switch ($choice) {
             "1"  { Invoke-Safely -ActionName "Close FiveM / GTA" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
@@ -1254,6 +1261,7 @@ function Show-MainMenu {
             "7"  { Invoke-Safely -ActionName "Open FiveM Files" -ScriptBlock { Open-FiveMFiles } | Out-Null; Pause-Console }
             "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
             "9"  { Show-ActionHistory; Pause-Console }
+            "10" { Invoke-Safely -ActionName "Connect to We The People RP" -ScriptBlock { Connect-WeThePeopleRP } | Out-Null; Pause-Console }
             "0"  {
                 Write-Log "Exiting tool." "INFO"
                 break
