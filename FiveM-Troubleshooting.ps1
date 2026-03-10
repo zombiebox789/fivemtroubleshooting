@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.6.1
+    FiveM Troubleshooter v2.6.2
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.6.1"
+$Script:Version        = "2.6.2"
 $Script:CompanyName    = "Insomnia's Tech Tools"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -1100,6 +1100,44 @@ function Connect-WeThePeopleRP {
     Write-Log "Connection request sent to We The People RP." "SUCCESS"
 }
 
+function New-WTPRPDesktopShortcut {
+    $shortcutName = "WTPRP FiveM Launcher.lnk"
+    $desktopPath = [Environment]::GetFolderPath("Desktop")
+    $shortcutPath = Join-Path $desktopPath $shortcutName
+
+    $assetRoot = Join-Path $env:LocalAppData "FiveM-Troubleshooter\assets"
+    $iconPath = Join-Path $assetRoot "wtprp_icon_full.ico"
+    $iconUrl = "https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/refs/heads/main/wtprp_icon_full.ico"
+    $connectUri = "fivem://connect/151.244.225.160:30120"
+
+    if (-not (Test-Path $assetRoot)) {
+        New-Item -Path $assetRoot -ItemType Directory -Force | Out-Null
+    }
+
+    try {
+        Invoke-WebRequest -Uri $iconUrl -OutFile $iconPath -UseBasicParsing -ErrorAction Stop
+    }
+    catch {
+        throw "Failed to download shortcut icon: $($_.Exception.Message)"
+    }
+
+    try {
+        $wsh = New-Object -ComObject WScript.Shell
+        $shortcut = $wsh.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = "$env:WINDIR\explorer.exe"
+        $shortcut.Arguments = $connectUri
+        $shortcut.WorkingDirectory = $desktopPath
+        $shortcut.IconLocation = $iconPath
+        $shortcut.Description = "WTPRP FiveM auto-connect launcher"
+        $shortcut.Save()
+    }
+    catch {
+        throw "Failed to create desktop shortcut: $($_.Exception.Message)"
+    }
+
+    Write-Log "Desktop shortcut created: $shortcutPath" "SUCCESS"
+}
+
 function Open-CommunityLink {
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -1273,7 +1311,7 @@ function Show-MainMenu {
         Write-Host " 4) Reset Internet Settings"
         Write-Host " 5) Set DNS to Cloudflare"
         Write-Host " 6) Clear FiveM Local Files"
-        Write-Host " 7) Open FiveM Files"
+        Write-Host " 7) Create WTPRP desktop shortcut (auto connect)"
         Write-Host
 
         Write-SectionTitle -Title "Information / Support"
@@ -1302,7 +1340,7 @@ function Show-MainMenu {
             "4"  { Invoke-Safely -ActionName "Reset Internet Settings" -ScriptBlock { Reset-NetworkStack } | Out-Null; Invoke-RestartPrompt; Pause-Console }
             "5"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Pause-Console }
             "6"  { Invoke-Safely -ActionName "Clear FiveM Local Files" -ScriptBlock { Clear-FiveMLocalFiles } | Out-Null; Pause-Console }
-            "7"  { Invoke-Safely -ActionName "Open FiveM Files" -ScriptBlock { Open-FiveMFiles } | Out-Null; Pause-Console }
+            "7"  { Invoke-Safely -ActionName "Create WTPRP desktop shortcut (auto connect)" -ScriptBlock { New-WTPRPDesktopShortcut } | Out-Null; Pause-Console }
             "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
             "9"  { Show-ActionHistory; Pause-Console }
             "10" { Invoke-Safely -ActionName "Connect to We The People RP" -ScriptBlock { Connect-WeThePeopleRP } | Out-Null; Pause-Console }
