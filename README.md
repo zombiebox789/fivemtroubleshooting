@@ -38,7 +38,7 @@ The script is intended only to perform basic troubleshooting and cleanup tasks r
 Need Additional Help?
 If the troubleshooter does not resolve your issue:
 Run the diagnostic export option
-Upload the generated ZIP file
+Upload the generated ZIP file placed on your DESKTOP
 Send it to server staff for review
 
 Server Links
