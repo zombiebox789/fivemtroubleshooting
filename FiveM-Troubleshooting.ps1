@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.6.0
+    FiveM Troubleshooter v2.6.1
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.6.0"
+$Script:Version        = "2.6.1"
 $Script:CompanyName    = "Insomnia's Tech Tools"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -1099,6 +1099,33 @@ function Connect-WeThePeopleRP {
     Start-Process explorer.exe "fivem://connect/151.244.225.160:30120"
     Write-Log "Connection request sent to We The People RP." "SUCCESS"
 }
+
+function Open-CommunityLink {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Url
+    )
+
+    Write-Log "Opening link: $Name" "ACTION"
+    Start-Process explorer.exe $Url
+    Write-Log "Opened link: $Name" "SUCCESS"
+}
+
+function Open-WTPRPDiscord {
+    Open-CommunityLink -Name "Discord" -Url "https://discord.gg/pD2nFu3d"
+}
+
+function Open-WTPRPRules {
+    Open-CommunityLink -Name "Rules" -Url "https://docs.google.com/document/d/16PYoLOgpm99zyC5XthGnVfzhPb8DtqEMP3cykPsx8B8"
+}
+
+function Open-WTPRPVIP {
+    Open-CommunityLink -Name "VIP" -Url "https://we-the-people-rp.tebex.io/#hero"
+}
+
+function Open-WTPRPCancelVIP {
+    Open-CommunityLink -Name "Cancel VIP" -Url "https://checkout.tebex.io/payment-history/recurring-payments"
+}
 #endregion Repair Actions
 
 #region Restart
@@ -1255,11 +1282,18 @@ function Show-MainMenu {
         Write-Host "10) Connect to ""We The People RP"""
         Write-Host
 
+        Write-SectionTitle -Title "Links"
+        Write-Host "11) Open Discord"
+        Write-Host "12) Open Rules"
+        Write-Host "13) Open VIP Store"
+        Write-Host "14) Open Cancel VIP"
+        Write-Host
+
         Write-SectionTitle -Title "Session"
         Write-Host " 0) Exit"
         Write-Host
 
-        $choice = Read-Host "Select an option [0-10]"
+        $choice = Read-Host "Select an option [0-14]"
 
         switch ($choice) {
             "1"  { Invoke-Safely -ActionName "Close FiveM / GTA" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
@@ -1272,6 +1306,10 @@ function Show-MainMenu {
             "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
             "9"  { Show-ActionHistory; Pause-Console }
             "10" { Invoke-Safely -ActionName "Connect to We The People RP" -ScriptBlock { Connect-WeThePeopleRP } | Out-Null; Pause-Console }
+            "11" { Invoke-Safely -ActionName "Open Discord Link" -ScriptBlock { Open-WTPRPDiscord } | Out-Null; Pause-Console }
+            "12" { Invoke-Safely -ActionName "Open Rules Link" -ScriptBlock { Open-WTPRPRules } | Out-Null; Pause-Console }
+            "13" { Invoke-Safely -ActionName "Open VIP Link" -ScriptBlock { Open-WTPRPVIP } | Out-Null; Pause-Console }
+            "14" { Invoke-Safely -ActionName "Open Cancel VIP Link" -ScriptBlock { Open-WTPRPCancelVIP } | Out-Null; Pause-Console }
             "0"  {
                 Write-Log "Exiting tool." "INFO"
                 $Script:ExitRequested = $true
