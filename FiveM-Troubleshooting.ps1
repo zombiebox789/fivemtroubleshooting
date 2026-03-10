@@ -1229,7 +1229,7 @@ function Show-MainMenu {
         Write-Host " 3) Clear Crash Logs"
         Write-Host " 4) Reset Internet Settings"
         Write-Host " 5) Set DNS to Cloudflare"
-        Write-Host " 6) Clear FiveM Local Files"
+        Write-Host " 6) Clear FiveM Local Files Secondary"
         Write-Host " 7) Open FiveM Files"
         Write-Host
 
