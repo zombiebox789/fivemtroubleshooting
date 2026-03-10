@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.6.2
+    FiveM Troubleshooter v2.6.3
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.6.2"
+$Script:Version        = "2.6.3"
 $Script:CompanyName    = "Insomnia's Tech Tools"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -1162,7 +1162,7 @@ function Open-WTPRPVIP {
 }
 
 function Open-WTPRPCancelVIP {
-    Open-CommunityLink -Name "Cancel VIP" -Url "https://checkout.tebex.io/payment-history/recurring-payments"
+    Open-CommunityLink -Name "Cancel VIP" -Url "https://portal.tebex.io/dashboard"
 }
 #endregion Repair Actions
 
