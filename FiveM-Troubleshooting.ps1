@@ -1311,10 +1311,10 @@ function Show-MainMenu {
         Write-Host " 4) Reset Internet Settings"
         Write-Host " 5) Set DNS to Cloudflare"
         Write-Host " 6) Clear FiveM Local Files"
-        Write-Host " 7) Create WTPRP desktop shortcut (auto connect)"
         Write-Host
 
         Write-SectionTitle -Title "Information / Support"
+        Write-Host " 7) Create WTPRP desktop shortcut (auto connect)"
         Write-Host " 8) Export Support Package"
         Write-Host " 9) View Action History"
         Write-Host "10) Connect to ""We The People RP"""
@@ -1324,7 +1324,7 @@ function Show-MainMenu {
         Write-Host "11) Open Discord"
         Write-Host "12) Open Rules"
         Write-Host "13) Open VIP Store"
-        Write-Host "14) Open Cancel VIP"
+        Write-Host "14) Manage VIP Subscription"
         Write-Host
 
         Write-SectionTitle -Title "Session"
@@ -1347,7 +1347,7 @@ function Show-MainMenu {
             "11" { Invoke-Safely -ActionName "Open Discord Link" -ScriptBlock { Open-WTPRPDiscord } | Out-Null; Pause-Console }
             "12" { Invoke-Safely -ActionName "Open Rules Link" -ScriptBlock { Open-WTPRPRules } | Out-Null; Pause-Console }
             "13" { Invoke-Safely -ActionName "Open VIP Link" -ScriptBlock { Open-WTPRPVIP } | Out-Null; Pause-Console }
-            "14" { Invoke-Safely -ActionName "Open Cancel VIP Link" -ScriptBlock { Open-WTPRPCancelVIP } | Out-Null; Pause-Console }
+            "14" { Invoke-Safely -ActionName "Manage VIP Subscription" -ScriptBlock { Open-WTPRPManageVIP } | Out-Null; Pause-Console }
             "0"  {
                 Write-Log "Exiting tool." "INFO"
                 $Script:ExitRequested = $true
