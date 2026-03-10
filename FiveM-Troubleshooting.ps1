@@ -589,6 +589,83 @@ function Resolve-FiveMInstallInfo {
     }
 }
 
+function Get-LatestFileFromPaths {
+    param(
+        [Parameter(Mandatory)][string[]]$SearchPaths,
+        [Parameter(Mandatory)][string[]]$Patterns
+    )
+
+    $latest = $null
+
+    foreach ($path in $SearchPaths) {
+        if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path $path)) {
+            continue
+        }
+
+        foreach ($pattern in $Patterns) {
+            $candidate = Get-ChildItem -Path $path -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1
+
+            if (-not $candidate) {
+                continue
+            }
+
+            if (-not $latest -or $candidate.LastWriteTime -gt $latest.LastWriteTime) {
+                $latest = $candidate
+            }
+        }
+    }
+
+    return $latest
+}
+
+function Add-LatestCrashArtifactsToBundle {
+    param(
+        [Parameter(Mandatory)][string]$BundlePath
+    )
+
+    $fivemPaths = Get-FiveMEffectivePaths
+    $fivemInfo = Resolve-FiveMInstallInfo
+    $documentsRoot = [Environment]::GetFolderPath("MyDocuments")
+    $localFiveMRoot = Join-Path $env:LocalAppData "FiveM"
+
+    $searchRoots = @(
+        $fivemPaths.FiveMApplicationData,
+        $fivemPaths.FiveMCrashes,
+        (Join-Path $fivemPaths.FiveMApplicationData "logs"),
+        $Script:Paths.FiveMApplicationData,
+        $Script:Paths.FiveMCrashes,
+        $localFiveMRoot,
+        $fivemInfo.InstallRootPath,
+        (Join-Path $fivemInfo.InstallRootPath "logs"),
+        (Join-Path $fivemInfo.InstallRootPath "crashes"),
+        (Join-Path $documentsRoot "Rockstar Games\GTA V"),
+        (Join-Path $documentsRoot "Rockstar Games\GTA V\logs"),
+        (Join-Path $documentsRoot "Rockstar Games\GTA V\crashes")
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    $latestDump = Get-LatestFileFromPaths -SearchPaths $searchRoots -Patterns @("*.dmp","*.mdmp","*.hdmp")
+    if ($latestDump) {
+        $dumpName = "latest-crash-dump$($latestDump.Extension)"
+        Copy-Item -Path $latestDump.FullName -Destination (Join-Path $BundlePath $dumpName) -Force -ErrorAction SilentlyContinue
+        Write-Log "Included latest crash dump: $($latestDump.FullName)" "SUCCESS"
+    }
+    else {
+        Write-Log "No crash dump file was found to include." "WARN"
+    }
+
+    $latestLog = Get-LatestFileFromPaths -SearchPaths $searchRoots -Patterns @("CitizenFX*.log","citizenfx*.log","*.log","*.txt")
+    if ($latestLog) {
+        $logName = "latest-log-file$($latestLog.Extension)"
+        Copy-Item -Path $latestLog.FullName -Destination (Join-Path $BundlePath $logName) -Force -ErrorAction SilentlyContinue
+        Write-Log "Included latest log file: $($latestLog.FullName)" "SUCCESS"
+    }
+    else {
+        Write-Log "No log file was found to include." "WARN"
+    }
+}
+
 function Invoke-ExternalCommandChecked {
     param(
         [Parameter(Mandatory)][string]$Command,
@@ -1088,6 +1165,8 @@ function Export-DiagnosticsBundle {
     catch {
         Write-Log "One or more extra exports failed: $($_.Exception.Message)" "WARN"
     }
+
+    Add-LatestCrashArtifactsToBundle -BundlePath $bundleRoot
 
     try {
         Compress-Archive -Path (Join-Path $bundleRoot '*') -DestinationPath $zipPath -Force
