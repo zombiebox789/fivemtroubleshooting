@@ -14,7 +14,7 @@
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
 $Script:Version        = "2.6.3"
-$Script:CompanyName    = "Insomnia's Tech Tools"
+$Script:CompanyName    = "Insomnia's FiveM Tech Tool"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
 
