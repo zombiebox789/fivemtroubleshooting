@@ -1,20 +1,20 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.5.6
+    FiveM Troubleshooter v2.6.0
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
     Designed to keep a lighter system footprint.
 
 .NOTES
-    Recommended to run as Administrator.
+    Run at your own risk. Always back up important data before making changes to your system.
 #>
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.5.6"
-$Script:CompanyName    = "Insomnia Studios"
+$Script:Version        = "2.6.0"
+$Script:CompanyName    = "Insomnia's Tech Tools"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
 
@@ -28,16 +28,17 @@ $Script:History        = New-Object System.Collections.Generic.List[object]
 $Script:Results        = New-Object System.Collections.Generic.List[object]
 $Script:RestartNeeded  = $false
 $Script:LastActionResult = $null
+$Script:ExitRequested  = $false
 
 $Script:Paths = @{
     FiveMRoot            = Join-Path $env:LocalAppData "FiveM"
     FiveMApp             = Join-Path $env:LocalAppData "FiveM\FiveM.app"
-    FiveMApplicationData = Join-Path $env:LocalAppData "FiveM\FiveM Application Data"
-    FiveMData            = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\data"
-    FiveMCrashes         = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\Crashes"
-    ServerCachePriv      = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\data\server-cache-priv"
-    ServerCache          = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\data\server-cache"
-    NuiStorage           = Join-Path $env:LocalAppData "FiveM\FiveM Application Data\data\nui-storage"
+    FiveMApplicationData = Join-Path $env:LocalAppData "FiveM\FiveM.app"
+    FiveMData            = Join-Path $env:LocalAppData "FiveM\FiveM.app\data"
+    FiveMCrashes         = Join-Path $env:LocalAppData "FiveM\FiveM.app\crashes"
+    ServerCachePriv      = Join-Path $env:LocalAppData "FiveM\FiveM.app\data\server-cache-priv"
+    ServerCache          = Join-Path $env:LocalAppData "FiveM\FiveM.app\data\server-cache"
+    NuiStorage           = Join-Path $env:LocalAppData "FiveM\FiveM.app\data\nui-storage"
     Temp                 = $env:TEMP
     Desktop              = [Environment]::GetFolderPath("Desktop")
 }
@@ -260,6 +261,19 @@ function Remove-ChildItemsSafely {
         catch {
             Write-Log "Skipped locked item: $($_.FullName)" "WARN"
         }
+    }
+}
+
+function Remove-SessionArtifacts {
+    if (-not (Test-Path $Script:BaseFolder)) {
+        return
+    }
+
+    try {
+        Remove-Item -Path $Script:BaseFolder -Recurse -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Host "Cleanup skipped for temporary folder: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
@@ -627,7 +641,6 @@ function Add-LatestCrashArtifactsToBundle {
 
     $fivemPaths = Get-FiveMEffectivePaths
     $fivemInfo = Resolve-FiveMInstallInfo
-    $documentsRoot = [Environment]::GetFolderPath("MyDocuments")
     $localFiveMRoot = Join-Path $env:LocalAppData "FiveM"
 
     $searchRoots = @(
@@ -639,10 +652,7 @@ function Add-LatestCrashArtifactsToBundle {
         $localFiveMRoot,
         $fivemInfo.InstallRootPath,
         (Join-Path $fivemInfo.InstallRootPath "logs"),
-        (Join-Path $fivemInfo.InstallRootPath "crashes"),
-        (Join-Path $documentsRoot "Rockstar Games\GTA V"),
-        (Join-Path $documentsRoot "Rockstar Games\GTA V\logs"),
-        (Join-Path $documentsRoot "Rockstar Games\GTA V\crashes")
+        (Join-Path $fivemInfo.InstallRootPath "crashes")
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
     $latestDump = Get-LatestFileFromPaths -SearchPaths $searchRoots -Patterns @("*.dmp","*.mdmp","*.hdmp")
@@ -1264,7 +1274,8 @@ function Show-MainMenu {
             "10" { Invoke-Safely -ActionName "Connect to We The People RP" -ScriptBlock { Connect-WeThePeopleRP } | Out-Null; Pause-Console }
             "0"  {
                 Write-Log "Exiting tool." "INFO"
-                break
+                $Script:ExitRequested = $true
+                return
             }
             default {
                 Write-Log "Invalid selection." "WARN"
@@ -1288,5 +1299,10 @@ catch {
 }
 finally {
     Write-Log "Session ended." "INFO"
+    Remove-SessionArtifacts
 }
 #endregion Main
+
+if ($Script:ExitRequested) {
+    exit
+}
