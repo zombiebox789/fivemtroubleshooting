@@ -1085,42 +1085,9 @@ function Open-FiveMFiles {
 }
 
 function Connect-WeThePeopleRP {
-    $uri = "fivem://connect/151.244.225.160:30120"
-    Write-Log "Launching FiveM connection (non-elevated): We The People RP" "ACTION"
-
-    try {
-        # Use the shell broker to open protocol handlers with the user shell token.
-        $shell = New-Object -ComObject Shell.Application
-        $shell.ShellExecute($uri)
-        Write-Log "Connection request sent to We The People RP." "SUCCESS"
-        return
-    }
-    catch {
-        Write-Log "Shell broker launch failed, trying fallback method: $($_.Exception.Message)" "WARN"
-    }
-
-    try {
-        # Fallback: trigger protocol via Explorer.
-        Start-Process -FilePath "explorer.exe" -ArgumentList $uri -ErrorAction Stop
-        Write-Log "Connection request sent to We The People RP." "SUCCESS"
-        return
-    }
-    catch {
-        Write-Log "Explorer launch failed, trying limited scheduled task fallback: $($_.Exception.Message)" "WARN"
-    }
-
-    try {
-        $taskName = "FiveMConnect_$([Guid]::NewGuid().ToString('N'))"
-        $taskCmd = "cmd.exe /c start `"`" `"$uri`""
-        schtasks /Create /TN $taskName /TR $taskCmd /SC ONCE /ST 00:00 /RL LIMITED /F | Out-Null
-        schtasks /Run /TN $taskName | Out-Null
-        Start-Sleep -Milliseconds 500
-        schtasks /Delete /TN $taskName /F | Out-Null
-        Write-Log "Connection request sent to We The People RP." "SUCCESS"
-    }
-    catch {
-        throw "Failed to open FiveM connection URI in non-elevated mode. Ensure FiveM is installed and fivem:// protocol is registered."
-    }
+    Write-Log "Launching FiveM connection via Explorer: We The People RP" "ACTION"
+    Start-Process explorer.exe "fivem://connect/151.244.225.160:30120"
+    Write-Log "Connection request sent to We The People RP." "SUCCESS"
 }
 #endregion Repair Actions
 
