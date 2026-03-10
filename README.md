@@ -5,6 +5,7 @@ This script is designed to help players quickly resolve common FiveM problems wi
 How to Run (Recommended)
 Open PowerShell and run the following command:
 
+
 Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -Command "irm ''https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/FiveM-Troubleshooting.ps1'' | iex"'
 
 This will:
