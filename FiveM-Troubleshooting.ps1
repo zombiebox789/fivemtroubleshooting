@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.5.5
+    FiveM Troubleshooter v2.5.6
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.5.5"
+$Script:Version        = "2.5.6"
 $Script:CompanyName    = "Insomnia Studios"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -762,6 +762,7 @@ function Get-FiveMEffectivePaths {
         FiveMApplicationData = $appDataPath
         FiveMData            = $dataPath
         FiveMCrashes         = $crashesPath
+        Cache                = Join-Path $dataPath "cache"
         ServerCachePriv      = Join-Path $dataPath "server-cache-priv"
         ServerCache          = Join-Path $dataPath "server-cache"
         NuiStorage           = Join-Path $dataPath "nui-storage"
@@ -970,6 +971,7 @@ function Clear-FiveMCache {
     $paths = Get-FiveMEffectivePaths
 
     $cacheTargets = @(
+        $paths.Cache,
         $paths.ServerCachePriv,
         $paths.ServerCache
     )
