@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.5.4
+    FiveM Troubleshooter v2.5.5
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.5.4"
+$Script:Version        = "2.5.5"
 $Script:CompanyName    = "Insomnia Studios"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -705,12 +705,25 @@ function Get-FiveMInstallSource {
 
 function Get-FiveMAppDataPath {
     $info = Resolve-FiveMInstallInfo
-    if ($info.AppDataPath -and (Test-Path $info.AppDataPath)) {
-        return $info.AppDataPath
-    }
+    $candidates = @(
+        $info.AppDataPath,
+        $info.InstallRootPath,
+        $Script:Paths.FiveMApplicationData,
+        $Script:Paths.FiveMApp,
+        $Script:Paths.FiveMRoot
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
-    if (Test-Path $Script:Paths.FiveMApplicationData) {
-        return $Script:Paths.FiveMApplicationData
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path $candidate)) {
+            continue
+        }
+
+        if ((Test-Path (Join-Path $candidate "data")) -or
+            (Test-Path (Join-Path $candidate "crashes")) -or
+            (Test-Path (Join-Path $candidate "Crashes")) -or
+            (Test-Path (Join-Path $candidate "FiveM.app\data"))) {
+            return $candidate
+        }
     }
 
     return $null
@@ -719,15 +732,36 @@ function Get-FiveMAppDataPath {
 function Get-FiveMEffectivePaths {
     $appDataPath = Get-FiveMAppDataPath
     if (-not $appDataPath) {
-        $appDataPath = $Script:Paths.FiveMApplicationData
+        $appDataPath = if (Test-Path $Script:Paths.FiveMApp) { $Script:Paths.FiveMApp } else { $Script:Paths.FiveMApplicationData }
     }
 
-    $dataPath = Join-Path $appDataPath "data"
+    $dataCandidates = @(
+        (Join-Path $appDataPath "data"),
+        (Join-Path $appDataPath "FiveM.app\data")
+    )
+
+    $dataPath = ($dataCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1)
+    if (-not $dataPath) {
+        $dataPath = Join-Path $appDataPath "data"
+    }
+
+    $crashCandidates = @(
+        (Join-Path $appDataPath "crashes"),
+        (Join-Path $appDataPath "Crashes"),
+        (Join-Path $dataPath "crashes"),
+        (Join-Path $appDataPath "FiveM.app\crashes"),
+        (Join-Path $appDataPath "FiveM.app\Crashes")
+    )
+
+    $crashesPath = ($crashCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1)
+    if (-not $crashesPath) {
+        $crashesPath = Join-Path $appDataPath "Crashes"
+    }
 
     return @{
         FiveMApplicationData = $appDataPath
         FiveMData            = $dataPath
-        FiveMCrashes         = Join-Path $appDataPath "Crashes"
+        FiveMCrashes         = $crashesPath
         ServerCachePriv      = Join-Path $dataPath "server-cache-priv"
         ServerCache          = Join-Path $dataPath "server-cache"
         NuiStorage           = Join-Path $dataPath "nui-storage"
