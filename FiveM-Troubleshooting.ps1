@@ -14,7 +14,7 @@
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
 $Script:Version        = "2.6.3"
-$Script:CompanyName    = "Insomnia's FiveM Tech Tool"
+$Script:CompanyName    = "Insomnia's Tech Tools"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
 
@@ -1166,6 +1166,48 @@ function Open-WTPRPCancelVIP {
 }
 #endregion Repair Actions
 
+#region Advanced
+function Invoke-DISMRepairs {
+    Write-Log "Running DISM CheckHealth..." "ACTION"
+    Invoke-ExternalCommandChecked -Command "DISM.exe" -Arguments @("/Online","/Cleanup-Image","/CheckHealth") -Description "DISM CheckHealth"
+
+    Write-Log "Running DISM ScanHealth..." "ACTION"
+    Invoke-ExternalCommandChecked -Command "DISM.exe" -Arguments @("/Online","/Cleanup-Image","/ScanHealth") -Description "DISM ScanHealth"
+
+    Write-Log "Running DISM RestoreHealth..." "ACTION"
+    Invoke-ExternalCommandChecked -Command "DISM.exe" -Arguments @("/Online","/Cleanup-Image","/RestoreHealth") -Description "DISM RestoreHealth"
+
+    Write-Log "DISM repairs completed." "SUCCESS"
+}
+
+function Invoke-SystemFileCheck {
+    Write-Log "Running SFC /scannow..." "ACTION"
+    Invoke-ExternalCommandChecked -Command "sfc.exe" -Arguments @("/scannow") -Description "SFC scan"
+    Write-Log "SFC scan completed." "SUCCESS"
+}
+
+function Invoke-CheckDiskAllDrives {
+    $drives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -match '^[A-Za-z]:\\$' } | Sort-Object Name
+    if (-not $drives -or $drives.Count -eq 0) {
+        throw "No filesystem drives were found for CHKDSK."
+    }
+
+    foreach ($drive in $drives) {
+        $driveLetter = "$($drive.Name):"
+        Write-Log "Running CHKDSK scan on $driveLetter..." "ACTION"
+        & chkdsk.exe $driveLetter "/scan" | Out-Null
+        $exitCode = $LASTEXITCODE
+
+        if ($exitCode -eq 0) {
+            Write-Log "CHKDSK completed on $driveLetter." "SUCCESS"
+        }
+        else {
+            Write-Log "CHKDSK returned exit code $exitCode on $driveLetter." "WARN"
+        }
+    }
+}
+#endregion Advanced
+
 #region Restart
 function Invoke-RestartPrompt {
     if (-not $Script:RestartNeeded) {
@@ -1300,6 +1342,32 @@ function Export-DiagnosticsBundle {
 #endregion Export
 
 #region Menu
+function Show-AdvancedMenu {
+    do {
+        Show-Banner
+
+        Write-SectionTitle -Title "Advanced Repairs"
+        Write-Host " 1) DISM Repairs"
+        Write-Host " 2) SFC /scannow"
+        Write-Host " 3) CHKDSK on all drives"
+        Write-Host
+        Write-Host " 0) Back"
+        Write-Host
+
+        $choice = Read-Host "Select an option [0-3]"
+        switch ($choice) {
+            "1" { Invoke-Safely -ActionName "DISM Repairs" -ScriptBlock { Invoke-DISMRepairs } | Out-Null; Pause-Console }
+            "2" { Invoke-Safely -ActionName "SFC /scannow" -ScriptBlock { Invoke-SystemFileCheck } | Out-Null; Pause-Console }
+            "3" { Invoke-Safely -ActionName "CHKDSK on all drives" -ScriptBlock { Invoke-CheckDiskAllDrives } | Out-Null; Pause-Console }
+            "0" { return }
+            default {
+                Write-Log "Invalid selection." "WARN"
+                Start-Sleep -Seconds 1
+            }
+        }
+    } while ($true)
+}
+
 function Show-MainMenu {
     do {
         Show-Banner
@@ -1316,22 +1384,23 @@ function Show-MainMenu {
         Write-SectionTitle -Title "Information / Support"
         Write-Host " 7) Create WTPRP desktop shortcut (auto connect)"
         Write-Host " 8) Export Support Package"
-        Write-Host " 9) View Action History"
-        Write-Host "10) Connect to ""We The People RP"""
+        Write-Host " 9) Advanced Repairs"
+        Write-Host "10) View Action History"
+        Write-Host "11) Connect to ""We The People RP"""
         Write-Host
 
         Write-SectionTitle -Title "Links"
-        Write-Host "11) Open Discord"
-        Write-Host "12) Open Rules"
-        Write-Host "13) Open VIP Store"
-        Write-Host "14) Manage VIP Subscription"
+        Write-Host "12) Open Discord"
+        Write-Host "13) Open Rules"
+        Write-Host "14) Open VIP Store"
+        Write-Host "15) Manage VIP Subscription"
         Write-Host
 
         Write-SectionTitle -Title "Session"
         Write-Host " 0) Exit"
         Write-Host
 
-        $choice = Read-Host "Select an option [0-14]"
+        $choice = Read-Host "Select an option [0-15]"
 
         switch ($choice) {
             "1"  { Invoke-Safely -ActionName "Close FiveM / GTA" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
@@ -1342,12 +1411,13 @@ function Show-MainMenu {
             "6"  { Invoke-Safely -ActionName "Clear FiveM Local Files" -ScriptBlock { Clear-FiveMLocalFiles } | Out-Null; Pause-Console }
             "7"  { Invoke-Safely -ActionName "Create WTPRP desktop shortcut (auto connect)" -ScriptBlock { New-WTPRPDesktopShortcut } | Out-Null; Pause-Console }
             "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
-            "9"  { Show-ActionHistory; Pause-Console }
-            "10" { Invoke-Safely -ActionName "Connect to We The People RP" -ScriptBlock { Connect-WeThePeopleRP } | Out-Null; Pause-Console }
-            "11" { Invoke-Safely -ActionName "Open Discord Link" -ScriptBlock { Open-WTPRPDiscord } | Out-Null; Pause-Console }
-            "12" { Invoke-Safely -ActionName "Open Rules Link" -ScriptBlock { Open-WTPRPRules } | Out-Null; Pause-Console }
-            "13" { Invoke-Safely -ActionName "Open VIP Link" -ScriptBlock { Open-WTPRPVIP } | Out-Null; Pause-Console }
-            "14" { Invoke-Safely -ActionName "Manage VIP Subscription" -ScriptBlock { Open-WTPRPManageVIP } | Out-Null; Pause-Console }
+            "9"  { Show-AdvancedMenu }
+            "10" { Show-ActionHistory; Pause-Console }
+            "11" { Invoke-Safely -ActionName "Connect to We The People RP" -ScriptBlock { Connect-WeThePeopleRP } | Out-Null; Pause-Console }
+            "12" { Invoke-Safely -ActionName "Open Discord Link" -ScriptBlock { Open-WTPRPDiscord } | Out-Null; Pause-Console }
+            "13" { Invoke-Safely -ActionName "Open Rules Link" -ScriptBlock { Open-WTPRPRules } | Out-Null; Pause-Console }
+            "14" { Invoke-Safely -ActionName "Open VIP Link" -ScriptBlock { Open-WTPRPVIP } | Out-Null; Pause-Console }
+            "15" { Invoke-Safely -ActionName "Manage VIP Subscription" -ScriptBlock { Open-WTPRPCancelVIP } | Out-Null; Pause-Console }
             "0"  {
                 Write-Log "Exiting tool." "INFO"
                 $Script:ExitRequested = $true
