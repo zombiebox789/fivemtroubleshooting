@@ -1206,6 +1206,51 @@ function Invoke-CheckDiskAllDrives {
         }
     }
 }
+
+function Invoke-RepairVCRuntimes {
+    Write-Log "Repairing Microsoft Visual C++ Runtimes..." "ACTION"
+
+    $vcTempRoot = Join-Path $Script:TempFolder "vcpp-repair"
+    if (-not (Test-Path $vcTempRoot)) {
+        New-Item -Path $vcTempRoot -ItemType Directory -Force | Out-Null
+    }
+
+    $packages = @(
+        @{
+            Name = "Microsoft Visual C++ x64"
+            Url  = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+            File = Join-Path $vcTempRoot "vc_redist.x64.exe"
+        },
+        @{
+            Name = "Microsoft Visual C++ x86"
+            Url  = "https://aka.ms/vs/17/release/vc_redist.x86.exe"
+            File = Join-Path $vcTempRoot "vc_redist.x86.exe"
+        }
+    )
+
+    foreach ($pkg in $packages) {
+        Write-Log "Downloading $($pkg.Name) installer..." "ACTION"
+        Invoke-WebRequest -Uri $pkg.Url -OutFile $pkg.File -UseBasicParsing -ErrorAction Stop
+        Write-Log "Downloaded $($pkg.Name)." "SUCCESS"
+
+        Write-Log "Running repair for $($pkg.Name)..." "ACTION"
+        $proc = Start-Process -FilePath $pkg.File -ArgumentList "/repair","/quiet","/norestart" -PassThru -Wait -ErrorAction Stop
+        if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
+            throw "$($pkg.Name) repair failed with exit code $($proc.ExitCode)."
+        }
+
+        if ($proc.ExitCode -eq 3010) {
+            $Script:RestartNeeded = $true
+            Write-Log "$($pkg.Name) repaired. Restart is recommended." "WARN"
+        }
+        else {
+            Write-Log "$($pkg.Name) repaired successfully." "SUCCESS"
+        }
+    }
+
+    Remove-Item -Path $vcTempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Log "Microsoft Visual C++ Runtime repair complete." "SUCCESS"
+}
 #endregion Advanced
 
 #region Restart
@@ -1350,15 +1395,17 @@ function Show-AdvancedMenu {
         Write-Host " 1) DISM Repairs"
         Write-Host " 2) SFC /scannow"
         Write-Host " 3) CHKDSK on all drives"
+        Write-Host " 4) Repair Microsoft Visual C++ Runtimes"
         Write-Host
         Write-Host " 0) Back"
         Write-Host
 
-        $choice = Read-Host "Select an option [0-3]"
+        $choice = Read-Host "Select an option [0-4]"
         switch ($choice) {
             "1" { Invoke-Safely -ActionName "DISM Repairs" -ScriptBlock { Invoke-DISMRepairs } | Out-Null; Pause-Console }
             "2" { Invoke-Safely -ActionName "SFC /scannow" -ScriptBlock { Invoke-SystemFileCheck } | Out-Null; Pause-Console }
             "3" { Invoke-Safely -ActionName "CHKDSK on all drives" -ScriptBlock { Invoke-CheckDiskAllDrives } | Out-Null; Pause-Console }
+            "4" { Invoke-Safely -ActionName "Repair Microsoft Visual C++ Runtimes" -ScriptBlock { Invoke-RepairVCRuntimes } | Out-Null; Pause-Console }
             "0" { return }
             default {
                 Write-Log "Invalid selection." "WARN"
