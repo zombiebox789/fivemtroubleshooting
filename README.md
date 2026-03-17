@@ -5,7 +5,10 @@ This script is designed to help players quickly resolve common FiveM problems wi
 How to Run (Recommended)
 Open PowerShell and run the following command:
 
+Gui Version
+Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:TEMP ''InSoMNiAs-FiveM-Troubleshooter-GUI.ps1''; Remove-Item $p -Force -ErrorAction SilentlyContinue; irm ''https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/InSoMNiAs-FiveM-Troubleshooter-GUI.ps1'' -OutFile $p; . $p"'
 
+No Gui Version
 Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -Command "irm ''https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/FiveM-Troubleshooting.ps1'' | iex"'
 
 This will:
