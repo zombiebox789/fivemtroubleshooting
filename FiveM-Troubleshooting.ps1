@@ -4,7 +4,7 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v3.0.1
+    FiveM Troubleshooter v3.0.2
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
@@ -16,10 +16,11 @@ Add-Type -AssemblyName System.Drawing
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "3.0.1"
+$Script:Version        = "3.0.2"
 $Script:CompanyName    = "Insomnia's Tech Tools"
 $Script:LogoFileName   = "insomnias_fivem_troubleshooter_logo.png"
 $Script:LogoPath       = Join-Path $PSScriptRoot $Script:LogoFileName
+$Script:LogoUrl        = "https://github.com/zombiebox789/fivemtroubleshooting/blob/main/insomnias_fivem_troubleshooter_logo.png?raw=true"
 $Script:GuiInitialized = $false
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
@@ -1459,6 +1460,23 @@ function Get-LogoPath {
         if (Test-Path $candidate) {
             return $candidate
         }
+    }
+
+    # Fallback: fetch logo from GitHub when running from a location without bundled assets.
+    try {
+        $assetRoot = Join-Path $Script:BaseFolder "assets"
+        if (-not (Test-Path $assetRoot)) {
+            New-Item -Path $assetRoot -ItemType Directory -Force | Out-Null
+        }
+
+        $downloadPath = Join-Path $assetRoot $Script:LogoFileName
+        Invoke-WebRequest -Uri $Script:LogoUrl -OutFile $downloadPath -UseBasicParsing -ErrorAction Stop
+        if (Test-Path $downloadPath) {
+            return $downloadPath
+        }
+    }
+    catch {
+        Write-Log "Logo download failed, continuing without logo: $($_.Exception.Message)" "WARN"
     }
 
     return $null
