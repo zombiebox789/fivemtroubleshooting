@@ -22,7 +22,7 @@ $Script:ToolName       = "FiveM Troubleshooter"
 $Script:Version        = "3.0.3"
 $Script:CompanyName    = "Insomnia's Tech Tools"
 $Script:DebugMode      = [bool]$DebugMode
-$Script:LogoFileName   = "insomnias_fivem_troubleshooter_logo.png"
+$Script:LogoFileName   = "insomnias_fivem_troubleshooter_logov2.png"
 $Script:ScriptRootSafe = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
     $PSScriptRoot
 }
