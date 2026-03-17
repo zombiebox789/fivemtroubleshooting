@@ -1,4 +1,7 @@
 #Requires -Version 5.1
+param(
+    [switch]$DebugMode
+)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -18,6 +21,7 @@ Add-Type -AssemblyName System.Drawing
 $Script:ToolName       = "FiveM Troubleshooter"
 $Script:Version        = "3.0.2"
 $Script:CompanyName    = "Insomnia's Tech Tools"
+$Script:DebugMode      = [bool]$DebugMode
 $Script:LogoFileName   = "insomnias_fivem_troubleshooter_logo.png"
 $Script:LogoPath       = Join-Path $PSScriptRoot $Script:LogoFileName
 $Script:LogoUrl        = "https://github.com/zombiebox789/fivemtroubleshooting/blob/main/insomnias_fivem_troubleshooter_logo.png?raw=true"
@@ -215,7 +219,10 @@ function Show-Banner {
 }
 
 function Wait-ForInput {
-    return
+    if (-not $Script:DebugMode) {
+        return
+    }
+    Read-Host "Debug mode is enabled. Press Enter to continue"
 }
 
 function Read-YesNo {
@@ -264,7 +271,9 @@ function Start-Elevated {
     Write-Log "Not running as Administrator. Relaunching elevated..." "WARN"
 
     try {
-        Start-Process powershell.exe -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$PSCommandPath`""
+        $noExitArg = if ($Script:DebugMode) { "-NoExit " } else { "" }
+        $debugArg = if ($Script:DebugMode) { " -DebugMode" } else { "" }
+        Start-Process powershell.exe -Verb RunAs -ArgumentList "$noExitArg-ExecutionPolicy Bypass -NoProfile -File `"$PSCommandPath`"$debugArg"
         exit
     }
     catch {
@@ -2104,10 +2113,18 @@ finally {
     if ($Script:MainForm -and $Script:MainForm.Visible) {
         $Script:MainForm.Close()
     }
-    Remove-SessionArtifacts
+    if (-not $Script:DebugMode) {
+        Remove-SessionArtifacts
+    }
+    else {
+        Write-Log "Debug mode enabled: keeping temp artifacts at $($Script:BaseFolder)" "INFO"
+    }
 }
 #endregion Main
 
 if ($Script:ExitRequested) {
     exit
 }
+
+
+
