@@ -1460,12 +1460,21 @@ function Export-DiagnosticsBundle {
 
 #region GUI
 function Get-LogoPath {
-    $candidates = @(
-        $Script:LogoPath,
-        (Join-Path (Split-Path -Parent $PSCommandPath) $Script:LogoFileName),
-        (Join-Path $PSScriptRoot $Script:LogoFileName),
-        (Join-Path (Get-Location).Path $Script:LogoFileName)
-    ) | Where-Object { $_ } | Select-Object -Unique
+    $logoFileNames = @($Script:LogoFileName) | Where-Object { $_ } | Select-Object -Unique
+
+    $roots = @(
+        $Script:ScriptRootSafe,
+        (Split-Path -Parent $PSCommandPath),
+        $PSScriptRoot,
+        (Get-Location).Path
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+    foreach ($root in $roots) {
+        foreach ($name in $logoFileNames) {
+            $candidates.Add((Join-Path $root $name))
+        }
+    }
 
     foreach ($candidate in $candidates) {
         if (Test-Path $candidate) {
@@ -1475,20 +1484,41 @@ function Get-LogoPath {
 
     # Fallback: fetch logo from GitHub when running from a location without bundled assets.
     try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
         $assetRoot = Join-Path $Script:BaseFolder "assets"
         if (-not (Test-Path $assetRoot)) {
             New-Item -Path $assetRoot -ItemType Directory -Force | Out-Null
         }
 
-        $downloadPath = Join-Path $assetRoot $Script:LogoFileName
-        Invoke-WebRequest -Uri $Script:LogoUrl -OutFile $downloadPath -UseBasicParsing -ErrorAction Stop
-        if (Test-Path $downloadPath) {
-            return $downloadPath
+        $downloadUrls = @(
+            $Script:LogoUrl,
+            "https://raw.githubusercontent.com/zombiebox789/fivemtroubleshooting/main/$($Script:LogoFileName)"
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+        foreach ($url in $downloadUrls) {
+            try {
+                $targetName = Split-Path -Path $url -Leaf
+                if (-not $targetName.EndsWith(".png")) {
+                    $targetName = $Script:LogoFileName
+                }
+
+                $downloadPath = Join-Path $assetRoot $targetName
+                Invoke-WebRequest -Uri $url -OutFile $downloadPath -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+                if (Test-Path $downloadPath) {
+                    return $downloadPath
+                }
+            }
+            catch {
+                # Try the next URL.
+            }
         }
     }
     catch {
-        Write-Log "Logo download failed, continuing without logo: $($_.Exception.Message)" "WARN"
+        # Fall through to warning below.
     }
+
+    Write-Log "Logo download failed, continuing without logo." "WARN"
 
     return $null
 }
