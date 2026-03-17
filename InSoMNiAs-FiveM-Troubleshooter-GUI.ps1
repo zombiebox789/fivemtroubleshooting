@@ -146,7 +146,7 @@ function Show-Banner {
     Write-Host
 }
 
-function Pause-Console {
+function Wait-ForInput {
     Write-Host
     Read-Host "Press Enter to continue"
 }
@@ -334,8 +334,8 @@ function Get-SteamLibraryRoots {
 
         try {
             $vdf = Get-Content -Path $vdfPath -Raw -ErrorAction Stop
-            $matches = [regex]::Matches($vdf, '"path"\s+"([^"]+)"')
-            foreach ($match in $matches) {
+            $pathMatches = [regex]::Matches($vdf, '"path"\s+"([^"]+)"')
+            foreach ($match in $pathMatches) {
                 $libraryPath = $match.Groups[1].Value -replace '\\\\', '\'
                 if ($libraryPath -and (Test-Path $libraryPath)) {
                     $libraryRoots.Add($libraryPath)
@@ -935,13 +935,6 @@ function Get-SystemDiagnostics {
     return $diag
 }
 
-function Show-ActionHistory {
-    Write-Host
-    Write-Host "==================== Action History ====================" -ForegroundColor Cyan
-    foreach ($item in $Script:History) {
-        Write-Host "[$($item.Time)] [$($item.Level)] $($item.Message)"
-    }
-}
 #endregion Detection / Diagnostics
 
 #region Process Handling
@@ -1402,10 +1395,10 @@ function Show-AdvancedMenu {
 
         $choice = Read-Host "Select an option [0-4]"
         switch ($choice) {
-            "1" { Invoke-Safely -ActionName "DISM Repairs" -ScriptBlock { Invoke-DISMRepairs } | Out-Null; Pause-Console }
-            "2" { Invoke-Safely -ActionName "SFC /scannow" -ScriptBlock { Invoke-SystemFileCheck } | Out-Null; Pause-Console }
-            "3" { Invoke-Safely -ActionName "CHKDSK on all drives" -ScriptBlock { Invoke-CheckDiskAllDrives } | Out-Null; Pause-Console }
-            "4" { Invoke-Safely -ActionName "Repair Microsoft Visual C++ Runtimes" -ScriptBlock { Invoke-RepairVCRuntimes } | Out-Null; Pause-Console }
+            "1" { Invoke-Safely -ActionName "DISM Repairs" -ScriptBlock { Invoke-DISMRepairs } | Out-Null; Wait-ForInput }
+            "2" { Invoke-Safely -ActionName "SFC /scannow" -ScriptBlock { Invoke-SystemFileCheck } | Out-Null; Wait-ForInput }
+            "3" { Invoke-Safely -ActionName "CHKDSK on all drives" -ScriptBlock { Invoke-CheckDiskAllDrives } | Out-Null; Wait-ForInput }
+            "4" { Invoke-Safely -ActionName "Repair Microsoft Visual C++ Runtimes" -ScriptBlock { Invoke-RepairVCRuntimes } | Out-Null; Wait-ForInput }
             "0" { return }
             default {
                 Write-Log "Invalid selection." "WARN"
@@ -1432,39 +1425,37 @@ function Show-MainMenu {
         Write-Host " 7) Create WTPRP desktop shortcut (auto connect)"
         Write-Host " 8) Export Support Package"
         Write-Host " 9) Advanced Repairs"
-        Write-Host "10) View Action History"
-        Write-Host "11) Connect to ""We The People RP"""
+        Write-Host "10) Connect to ""We The People RP"""
         Write-Host
 
         Write-SectionTitle -Title "Links"
-        Write-Host "12) Open Discord"
-        Write-Host "13) Open Rules"
-        Write-Host "14) Open VIP Store"
-        Write-Host "15) Manage VIP Subscription"
+        Write-Host "11) Open Discord"
+        Write-Host "12) Open Rules"
+        Write-Host "13) Open VIP Store"
+        Write-Host "14) Manage VIP Subscription"
         Write-Host
 
         Write-SectionTitle -Title "Session"
         Write-Host " 0) Exit"
         Write-Host
 
-        $choice = Read-Host "Select an option [0-15]"
+        $choice = Read-Host "Select an option [0-14]"
 
         switch ($choice) {
-            "1"  { Invoke-Safely -ActionName "Close FiveM / GTA" -ScriptBlock { Stop-GameProcesses } | Out-Null; Pause-Console }
-            "2"  { Invoke-Safely -ActionName "Clear FiveM Cache" -ScriptBlock { Clear-FiveMCache } | Out-Null; Pause-Console }
-            "3"  { Invoke-Safely -ActionName "Clear Crash Logs" -ScriptBlock { Clear-FiveMCrashLogs } | Out-Null; Pause-Console }
-            "4"  { Invoke-Safely -ActionName "Reset Internet Settings" -ScriptBlock { Reset-NetworkStack } | Out-Null; Invoke-RestartPrompt; Pause-Console }
-            "5"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Pause-Console }
-            "6"  { Invoke-Safely -ActionName "Clear FiveM Local Files" -ScriptBlock { Clear-FiveMLocalFiles } | Out-Null; Pause-Console }
-            "7"  { Invoke-Safely -ActionName "Create WTPRP desktop shortcut (auto connect)" -ScriptBlock { New-WTPRPDesktopShortcut } | Out-Null; Pause-Console }
-            "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Pause-Console }
+            "1"  { Invoke-Safely -ActionName "Close FiveM / GTA" -ScriptBlock { Stop-GameProcesses } | Out-Null; Wait-ForInput }
+            "2"  { Invoke-Safely -ActionName "Clear FiveM Cache" -ScriptBlock { Clear-FiveMCache } | Out-Null; Wait-ForInput }
+            "3"  { Invoke-Safely -ActionName "Clear Crash Logs" -ScriptBlock { Clear-FiveMCrashLogs } | Out-Null; Wait-ForInput }
+            "4"  { Invoke-Safely -ActionName "Reset Internet Settings" -ScriptBlock { Reset-NetworkStack } | Out-Null; Invoke-RestartPrompt; Wait-ForInput }
+            "5"  { Invoke-Safely -ActionName "Set DNS to Cloudflare" -ScriptBlock { Set-CloudflareDNS } | Out-Null; Wait-ForInput }
+            "6"  { Invoke-Safely -ActionName "Clear FiveM Local Files" -ScriptBlock { Clear-FiveMLocalFiles } | Out-Null; Wait-ForInput }
+            "7"  { Invoke-Safely -ActionName "Create WTPRP desktop shortcut (auto connect)" -ScriptBlock { New-WTPRPDesktopShortcut } | Out-Null; Wait-ForInput }
+            "8"  { Invoke-Safely -ActionName "Export Support Package" -ScriptBlock { Export-DiagnosticsBundle } | Out-Null; Wait-ForInput }
             "9"  { Show-AdvancedMenu }
-            "10" { Show-ActionHistory; Pause-Console }
-            "11" { Invoke-Safely -ActionName "Connect to We The People RP" -ScriptBlock { Connect-WeThePeopleRP } | Out-Null; Pause-Console }
-            "12" { Invoke-Safely -ActionName "Open Discord Link" -ScriptBlock { Open-WTPRPDiscord } | Out-Null; Pause-Console }
-            "13" { Invoke-Safely -ActionName "Open Rules Link" -ScriptBlock { Open-WTPRPRules } | Out-Null; Pause-Console }
-            "14" { Invoke-Safely -ActionName "Open VIP Link" -ScriptBlock { Open-WTPRPVIP } | Out-Null; Pause-Console }
-            "15" { Invoke-Safely -ActionName "Manage VIP Subscription" -ScriptBlock { Open-WTPRPCancelVIP } | Out-Null; Pause-Console }
+            "10" { Invoke-Safely -ActionName "Connect to We The People RP" -ScriptBlock { Connect-WeThePeopleRP } | Out-Null; Wait-ForInput }
+            "11" { Invoke-Safely -ActionName "Open Discord Link" -ScriptBlock { Open-WTPRPDiscord } | Out-Null; Wait-ForInput }
+            "12" { Invoke-Safely -ActionName "Open Rules Link" -ScriptBlock { Open-WTPRPRules } | Out-Null; Wait-ForInput }
+            "13" { Invoke-Safely -ActionName "Open VIP Link" -ScriptBlock { Open-WTPRPVIP } | Out-Null; Wait-ForInput }
+            "14" { Invoke-Safely -ActionName "Manage VIP Subscription" -ScriptBlock { Open-WTPRPCancelVIP } | Out-Null; Wait-ForInput }
             "0"  {
                 Write-Log "Exiting tool." "INFO"
                 $Script:ExitRequested = $true
@@ -1488,7 +1479,7 @@ try {
 }
 catch {
     Write-Log "Fatal error: $($_.Exception.Message)" "ERROR"
-    Pause-Console
+    Wait-ForInput
 }
 finally {
     Write-Log "Session ended." "INFO"
@@ -1499,3 +1490,4 @@ finally {
 if ($Script:ExitRequested) {
     exit
 }
+
