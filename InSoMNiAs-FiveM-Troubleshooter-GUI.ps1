@@ -33,7 +33,7 @@ else {
     (Get-Location).Path
 }
 $Script:LogoPath       = Join-Path $Script:ScriptRootSafe $Script:LogoFileName
-$Script:LogoUrl        = "https://github.com/zombiebox789/fivemtroubleshooting/blob/main/insomnias_fivem_troubleshooter_logo.png?raw=true"
+$Script:LogoUrl        = "https://github.com/zombiebox789/fivemtroubleshooting/blob/main/insomnias_fivem_troubleshooter_logov2.png?raw=true"
 $Script:GuiInitialized = $false
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
