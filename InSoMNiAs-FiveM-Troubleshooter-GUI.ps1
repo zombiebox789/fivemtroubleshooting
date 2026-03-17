@@ -1794,15 +1794,15 @@ function Show-MainWindow {
 
     $logoFrame = New-Object System.Windows.Forms.Panel
     $logoFrame.Location = New-Object System.Drawing.Point(18, 8)
-    $logoFrame.Size = New-Object System.Drawing.Size(430, 145)
+    $logoFrame.Size = New-Object System.Drawing.Size(430, 170)
     $logoFrame.BorderStyle = 'None'
     $logoFrame.BackColor = [System.Drawing.Color]::FromArgb(8, 8, 8)
     $header.Controls.Add($logoFrame)
 
     $picture = New-Object System.Windows.Forms.PictureBox
-    $picture.Location = New-Object System.Drawing.Point(8, 8)
-    $picture.Size = New-Object System.Drawing.Size(414, 129)
-    $picture.SizeMode = 'Zoom'
+    $picture.Location = New-Object System.Drawing.Point(4, 4)
+    $picture.Size = New-Object System.Drawing.Size(422, 162)
+    $picture.SizeMode = 'StretchImage'
     $picture.BackColor = [System.Drawing.Color]::FromArgb(0, 0, 0)
     $picture.BorderStyle = 'None'
     $logoPath = Get-LogoPath
@@ -1810,13 +1810,6 @@ function Show-MainWindow {
         try { $picture.Image = [System.Drawing.Image]::FromFile($logoPath) } catch { }
     }
     $logoFrame.Controls.Add($picture)
-
-    $Script:lblVersion = New-Object System.Windows.Forms.Label
-    $Script:lblVersion.Location = New-Object System.Drawing.Point(18, 158)
-    $Script:lblVersion.Size = New-Object System.Drawing.Size(430, 22)
-    $Script:lblVersion.TextAlign = 'MiddleCenter'
-    $Script:lblVersion.ForeColor = [System.Drawing.Color]::Gainsboro
-    $header.Controls.Add($Script:lblVersion)
 
     $Script:chipAdmin = $null
     $Script:chipFiveM = $null
@@ -1860,6 +1853,13 @@ function Show-MainWindow {
     $Script:lblRestart.Location = New-Object System.Drawing.Point(18, 124)
     $Script:lblRestart.Size = New-Object System.Drawing.Size(300, 20)
     $statusPanel.Controls.Add($Script:lblRestart)
+
+    $Script:lblVersion = New-Object System.Windows.Forms.Label
+    $Script:lblVersion.Location = New-Object System.Drawing.Point(18, 146)
+    $Script:lblVersion.Size = New-Object System.Drawing.Size(300, 20)
+    $Script:lblVersion.TextAlign = 'MiddleLeft'
+    $Script:lblVersion.ForeColor = [System.Drawing.Color]::Gainsboro
+    $statusPanel.Controls.Add($Script:lblVersion)
 
     $left = New-Object System.Windows.Forms.Panel
     $left.Dock = 'Left'
