@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    FiveM Troubleshooter v2.6.3
+    FiveM Troubleshooter v3.0.3
 
 .DESCRIPTION
     Menu-driven FiveM troubleshooting and diagnostics utility.
@@ -13,7 +13,7 @@
 
 #region Config
 $Script:ToolName       = "FiveM Troubleshooter"
-$Script:Version        = "2.6.3"
+$Script:Version        = "3.0.3"
 $Script:CompanyName    = "Insomnia's Tech Tools"
 $Script:SessionId      = Get-Date -Format "yyyyMMdd_HHmmss"
 $Script:StartTime      = Get-Date
